@@ -65,11 +65,18 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 - **Nothing fails silently.** Unusable model output, unknown or unseen objects, blocked moves, and turns that find nothing all produce a message.
 - The step offset is forced to 0 so the avatar can't hop onto props and hover (the worlds are flat and there is no gravity).
 
+## Tested against the real model
+
+Verified end to end with `gemma3n:e4b` through the real `OllamaClient`, driving the avatar in the real worlds: stopping 0.5 m short of a wall and of a chair, asking when several chairs are in view or none are, "a bit" / "a bit more" / "back a bit" adapting, "turn around until you see the tree", and "wait, I mean left" halting instantly then going left. On an RTX 5070 a command takes about **0.6 s** round trip.
+
+**Use `127.0.0.1`, not `localhost`, for the Ollama endpoint.** On Windows `localhost` tries IPv6 first and adds about 2 s to every request; the client's default and an automatic rewrite of `localhost` already handle this.
+
 ## Known gaps / next steps
 
 - **No real voice input yet.** `ROVRDebugConsole` is a deliberate stand-in — next is Unity `Microphone` capture feeding speech-to-text (or native audio to Ollama's multimodal endpoint, if Ollama supports audio for Gemma 3n — verify before relying on it) ahead of `SubmitUtterance`.
 - **Interrupt Module works on a complete string**, not a live stream (Section 5.5.2 assumes a halt can land mid-utterance). Swap in a streaming check once real ASR exists.
-- **The prompt is untested against a real model in this repo.** Everything deterministic is tested; the exact wording the model responds to should be checked once `gemma3n:e4b` is pulled.
+- **One conversational gap:** after "which chair?", a reply like "the left one" can't aim at that chair (turns are 90° snaps), and the model sometimes turns left instead of asking the user to face it. The engine's message tells users to face the object and repeat the command, which works.
+- **Prompt-driven behaviour is model-dependent.** It was tuned and tested against `gemma3n:e4b` (41 of 42 scripted commands correct; the one miss is the "the left one" case above). Re-run those checks if you change the model or the prompt.
 - **No controller (joystick) arm yet** for the between-subjects control condition (Section 7.1) — it must move through `CharacterController.Move` with the same step offset, and use the same snap-turn and speed settings.
 - **No Task Completion Time logging** (Section 7.1.3) hooked up yet. `OllamaClient.LastLatencySeconds` covers LLM latency only.
 - Ground-following isn't simulated (no gravity, no stairs) — vertical motion only happens on explicit up/down commands.

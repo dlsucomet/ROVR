@@ -154,7 +154,9 @@ namespace ROVR
         }
 
         bool IsGrounded(string tag) { return Contains(groundedTags, tag); }
-        bool IsCollapsed(string tag) { return Contains(collapsedTags, tag); }
+        // Tags like Wall that are merged into one nearest entry: they're everywhere, not a single target.
+        public bool IsCollapsedTag(string tag) { return Contains(collapsedTags, tag); }
+        bool IsCollapsed(string tag) { return IsCollapsedTag(tag); }
 
         static bool Contains(string[] list, string tag)
         {
