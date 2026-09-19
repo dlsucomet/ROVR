@@ -26,6 +26,10 @@ namespace ROVR
         [SerializeField] NavigationController controller;
         [SerializeField] float stateTimeoutSeconds = 60f; // older than this, the previous command is forgotten
 
+        const float AheadDegrees = 25f;             // a target further off-axis than this isn't "ahead"
+        const float AmbiguousSpreadDegrees = 10f;   // matches this far apart are different targets
+        const float SideDegrees = 5f;               // 'to the left' means at least this far left of centre
+
         public event Action<string> OnClarificationNeeded;
         public event Action<string> OnStatus;   // blocked / not found notices
         public event Action<string> OnError;
@@ -47,13 +51,17 @@ STEPS. Each step has:
 - action: move | turn | stop
 - direction: forward | back | left | right | up | down | none
 - amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
-- condition: the object type to move toward or stop at (Wall, Door, Chair, Tree), copied from the visible objects list; an empty string when there is no target
+- condition: the object type to move toward or stop at (Wall, Door, Chair, Tree), copied from the visible objects list; when there is no target it is an empty string """" (never the word none)
 
-TURNS. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see a door' = a turn step with condition Door and amount none.
+TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition Tree and amount none. For 'turn until you see X' the condition is always X, even when X is not in the visible objects list, because turning is how the user finds it.
+
+NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
 
 VISIBLE OBJECTS is the only thing you know about the world. Each entry has tag, distance_m, angle_deg (negative = left, positive = right, 0 = straight ahead) and side. Never use an object that is not in the list, except as the target of a turn ('turn until you see X'). If the user names an object that is not in the list, return no steps and ask where it is. If several listed objects match and the command does not say which, ask which one. Moving toward an object only works when it is ahead of the user; if its side is left or right, ask them to turn toward it first.
 
-PREVIOUS COMMAND, when given, is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'back' or 'the other way' reverses it. If a question is pending, the user's command is probably the answer to it. Never take object information from the previous command.
+PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'back' or 'the other way' keeps the same action (a turn stays a turn) with the opposite direction. If the command needs a previous command and it says 'Previous command: none', return no steps and ask what they want to do. Never take object information from the previous command.
+
+CHOOSING. You cannot aim at one of several objects. If the user answers a question by picking one ('the left one'), return no steps and ask them to face it and repeat the command.
 
 If you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
 
@@ -66,10 +74,18 @@ Command: back up a bit
 {""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
 Command: a bit more (previous command was a small move forward)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
+Command: left
+{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
+Command: move right half a meter
+{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":""""}],""clarification"":""""}
+Command: a bit more (Previous command: none)
+{""steps"":[],""clarification"":""More of what? Tell me which way to move.""}
 Command: turn around until you see a chair
 {""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""Chair""}],""clarification"":""""}
+Command: turn around until you see the tree (no Tree in the visible objects list)
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""Tree""}],""clarification"":""""}
 Command: go to the tree (no Tree in the visible objects list)
-{""steps"":[],""clarification"":""I don't see a tree. Where is it compared to what you can see?""}";
+{""steps"":[],""clarification"":""I don't see a tree. Where is it relative to what you can see?""}";
 
         void Awake()
         {
@@ -118,7 +134,41 @@ Command: go to the tree (no Tree in the visible objects list)
                 utterance = interrupt.remainder; // "wait, I mean left": the correction still goes through
             }
 
+            // "More" / "again" mean nothing without a command to repeat. Say so without asking the model,
+            // which would otherwise invent one.
+            if (IsBareFollowUp(utterance) && !HasRecentCommand())
+            {
+                const string question = "More of what? Tell me which way to move.";
+                pendingClarification = question;
+                clarificationTime = Time.time;
+                OnClarificationNeeded?.Invoke(question);
+                return;
+            }
+
             Resolve(utterance);
+        }
+
+        bool HasRecentCommand()
+        {
+            return lastCommand != null && Time.time - lastCommandTime <= stateTimeoutSeconds;
+        }
+
+        static readonly string[] BareFollowUps =
+        {
+            "more", "a bit more", "a little more", "a touch more", "some more", "again", "once more", "one more",
+            "a bit further", "a little further", "further", "the other way", "the opposite way", "same again"
+        };
+
+        static bool IsBareFollowUp(string utterance)
+        {
+            var sb = new System.Text.StringBuilder();
+            bool space = true;
+            foreach (char c in utterance.ToLowerInvariant())
+            {
+                if (char.IsLetter(c)) { sb.Append(c); space = false; }
+                else if (!space) { sb.Append(' '); space = true; }
+            }
+            return Array.IndexOf(BareFollowUps, sb.ToString().Trim()) >= 0;
         }
 
         void Resolve(string utterance)
@@ -200,13 +250,66 @@ Command: go to the tree (no Tree in the visible objects list)
                 if (step.action == ActionType.Turn)
                 {
                     introducedByTurn.Add(tag); // turning until X is in view is how X gets found (6.4.2)
+
+                    // Turning until you see something you can already see would silently do nothing.
+                    if (command.steps.Length == 1 && visible.Exists(o => string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase)))
+                        return "The " + tag.ToLowerInvariant() + " is already in view. Where do you want to go?";
                     continue;
                 }
 
                 bool inView = visible.Exists(o => string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase));
                 if (!inView && !introducedByTurn.Contains(tag))
-                    return "I don't see a " + tag.ToLowerInvariant() + " right now. Where is it compared to what you can see?";
+                    return "I don't see a " + tag.ToLowerInvariant() + " right now. Where is it relative to what you can see?";
+
+                bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
+                if (inView && horizontal && !introducedByTurn.Contains(tag) && !grounding.IsCollapsedTag(tag))
+                {
+                    string aim = CheckAim(tag, step.direction, visible);
+                    if (aim != null) return aim;
+                }
             }
+            return null;
+        }
+
+        // Moving toward "the chair" only makes sense if a chair lies that way: roughly ahead for
+        // forward (the user faces where they want to go, 3.3.1), or on that side for left/right.
+        // Several in different directions is the thesis's ambiguity case (5.4.3): ask, rather than
+        // pick one. Objects in a line (two doors down a corridor) aren't ambiguous, since the
+        // nearest is reached first.
+        string CheckAim(string tag, DirectionType direction, System.Collections.Generic.List<GroundedObject> visible)
+        {
+            float minAngle = float.MaxValue, maxAngle = float.MinValue;
+            int candidates = 0;
+            GroundedObject nearest = default;
+            bool haveNearest = false;
+
+            foreach (var o in visible)
+            {
+                if (!string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (!haveNearest || o.distanceMeters < nearest.distanceMeters) { nearest = o; haveNearest = true; }
+
+                bool inDirection =
+                    direction == DirectionType.Forward ? Mathf.Abs(o.angleDegrees) <= AheadDegrees :
+                    direction == DirectionType.Left ? o.angleDegrees < -SideDegrees :
+                    o.angleDegrees > SideDegrees;
+                if (!inDirection) continue;
+
+                candidates++;
+                minAngle = Mathf.Min(minAngle, o.angleDegrees);
+                maxAngle = Mathf.Max(maxAngle, o.angleDegrees);
+            }
+
+            string name = tag.ToLowerInvariant();
+            if (candidates == 0)
+            {
+                string where = nearest.angleDegrees < 0f ? "left" : "right";
+                return direction == DirectionType.Forward
+                    ? "The " + name + " is off to your " + where + ". Turn to face it, then say it again."
+                    : "I don't see a " + name + " to your " + (direction == DirectionType.Left ? "left" : "right") + ". It's off to your " + where + ".";
+            }
+            if (maxAngle - minAngle > AmbiguousSpreadDegrees)
+                return "There's more than one " + name + " in view. Face the one you mean and say it again.";
             return null;
         }
 

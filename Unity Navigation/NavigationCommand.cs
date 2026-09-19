@@ -111,6 +111,13 @@ namespace ROVR
                     var action = ParseEnum(r.action, ActionType.Unknown);
                     var direction = ParseEnum(r.direction, DirectionType.None);
                     if (action == ActionType.Unknown) continue;
+
+                    string condition = (r.condition ?? string.Empty).Trim();
+                    // Small models sometimes write the word instead of leaving it empty.
+                    if (IsNothing(condition)) condition = string.Empty;
+                    // "Go to the chair": moving toward an object with no stated direction means forward.
+                    if (action == ActionType.Move && direction == DirectionType.None && condition.Length > 0)
+                        direction = DirectionType.Forward;
                     if (action == ActionType.Move && direction == DirectionType.None) continue;
 
                     float magnitude = Math.Max(0f, r.magnitude);
@@ -125,7 +132,7 @@ namespace ROVR
                         direction = direction,
                         amount = amount,
                         magnitude = magnitude,
-                        condition = (r.condition ?? string.Empty).Trim()
+                        condition = condition
                     });
                 }
             }
@@ -149,6 +156,12 @@ namespace ROVR
                   .Append("\"condition\":\"").Append(s.condition ?? string.Empty).Append("\"}");
             }
             return sb.Append("]}").ToString();
+        }
+
+        static bool IsNothing(string s)
+        {
+            return s.Equals("none", StringComparison.OrdinalIgnoreCase) || s.Equals("null", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("n/a", StringComparison.OrdinalIgnoreCase) || s == "-";
         }
 
         static T ParseEnum<T>(string value, T fallback) where T : struct

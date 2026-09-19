@@ -17,10 +17,14 @@ namespace ROVR
 {
     public class OllamaClient : MonoBehaviour
     {
-        [SerializeField] string endpoint = "http://localhost:11434/api/chat";
+        // 127.0.0.1, not "localhost": on Windows "localhost" tries IPv6 first and adds ~2 s to every request.
+        [SerializeField] string endpoint = "http://127.0.0.1:11434/api/chat";
         [SerializeField] string model = "gemma3n:e4b";
         [SerializeField] int timeoutSeconds = 30;
         const string KeepAlive = "30m"; // keep the model resident between commands
+
+        // Scenes saved with the old default still say "localhost"; fix that on the fly.
+        string Endpoint => endpoint.Replace("//localhost", "//127.0.0.1");
 
         [Serializable]
         class OllamaMessage
@@ -54,7 +58,7 @@ namespace ROVR
         IEnumerator WarmUpCoroutine()
         {
             string body = "{\"model\":\"" + JsonEscape(model) + "\",\"messages\":[],\"keep_alive\":\"" + KeepAlive + "\"}";
-            var request = new UnityWebRequest(endpoint, "POST");
+            var request = new UnityWebRequest(Endpoint, "POST");
             try
             {
                 request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
@@ -77,7 +81,7 @@ namespace ROVR
             string body = BuildRequestJson(systemPrompt, userPrompt);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(body);
 
-            var request = new UnityWebRequest(endpoint, "POST");
+            var request = new UnityWebRequest(Endpoint, "POST");
             try
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
