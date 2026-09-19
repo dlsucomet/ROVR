@@ -1,21 +1,52 @@
 // Assets/Editor/HouseGenerator.cs
 // Menu: Tools > ROVR > Generate House
-// Builds the ROVR house world (matches rovr-house-floorplan.svg exactly, 1 unit = 1 meter).
-// Drop real models in Assets/Resources/Props/<model>.prefab (Chair, Sofa, Bed, Counter, Sink)
-// and a wall material at Assets/Resources/Props/WallMaterial.mat to use them automatically —
-// anything missing just falls back to a blockout box, so this keeps working either way.
+// Builds the ROVR house world: two storeys, 24 x 20 m footprint, 1 unit = 1 meter.
+// Floor plans: rovr-house-floorplan.svg (generated from the same data as this script).
+//
+//   Ground floor: entrance hall, living room, kitchen + dining area, powder room,
+//                 bedroom with ensuite bathroom, and the staircase.
+//   Upper floor:  landing, master bedroom, walk-in closet, master bathroom.
+//
+// Needs WorldKit.cs alongside it. Drop real models in Assets/Resources/Props/<model>.prefab
+// (model names are the 3rd argument of each Prop below) plus WallMaterial.mat / FloorMaterial.mat
+// to use them automatically — anything missing falls back to a coloured blockout box.
+//
+// The upper-floor slab doubles as the ground-floor ceiling, and the flat roof over the upper
+// storey is its own "Roof" object: disable it to look down into the rooms in the Scene view.
 using UnityEngine;
 using UnityEditor;
 
 public static class HouseGenerator
 {
-    const float WallHeight = 3f;
-    const float WallThickness = 0.2f;
+    const float Ground = 0f;
+    const float Upper = 3.2f;          // top of the upper-floor slab
+    const float SlabThickness = 0.2f;
+    const float H = WorldKit.WallHeight;
+    const float Rail = 0.9f;
 
-    // (x, z) endpoints of a wall segment, in meters
-    struct Wall { public Vector2 a, b; public Wall(float x1, float z1, float x2, float z2) { a = new Vector2(x1, z1); b = new Vector2(x2, z2); } }
-    struct Door { public Vector3 pos, size; public Door(float x, float z, float sx, float sz) { pos = new Vector3(x, WallHeight / 2f, z); size = new Vector3(sx, WallHeight, sz); } }
-    struct Prop { public string name, tag, model; public Vector3 pos, size; }
+    // Straight stair flight, 16 risers of 0.2 m, running north inside a walled alcove.
+    const float StairX0 = 13f, StairX1 = 15f, StairZ0 = 8f;
+    const int Risers = 16;
+    const float Tread = 0.3f;
+    const float StairZ1 = StairZ0 + (Risers - 1) * Tread;
+
+    const string F = "Furniture";
+    const string C = "Chair";
+
+    struct Prop
+    {
+        public int level;
+        public string name, tag, model, mat;
+        public Vector3 pos, size;
+        public float y0;
+
+        // (x, z) is the footprint centre; y0 is height above the floor (for wall-mounted / stacked items)
+        public Prop(int level, string name, string tag, string model, float x, float z, float sx, float sy, float sz, string mat, float y0 = 0f)
+        {
+            this.level = level; this.name = name; this.tag = tag; this.model = model; this.mat = mat;
+            this.pos = new Vector3(x, 0f, z); this.size = new Vector3(sx, sy, sz); this.y0 = y0;
+        }
+    }
 
     [MenuItem("Tools/ROVR/Generate House")]
     static void Generate() => Generate(Vector3.zero);
@@ -24,170 +55,242 @@ public static class HouseGenerator
     // touching any of the coordinates below.
     public static void Generate(Vector3 offset)
     {
-        EnsureTags("Wall", "Door", "Chair", "Furniture");
+        WorldKit.EnsureTags("Wall", "Door", "Chair", "Furniture", "Stairs");
 
-        var root = new GameObject("House").transform;
-        BuildFloor(root);
+        var root = WorldKit.NewRoot("House");
+        BuildSlabs(root);
         BuildWalls(root);
-        BuildDoors(root);
+        BuildStairs(root);
         BuildProps(root);
+        BuildLights(root);
+
+        var start = new GameObject("Start").transform;
+        start.SetParent(root, false);
+        start.localPosition = new Vector3(12f, 0f, 1.5f); // just inside the entrance, facing north
 
         root.position = offset;
     }
 
-    static void BuildFloor(Transform root)
+    static void BuildSlabs(Transform root)
     {
-        var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        floor.name = "Floor";
-        floor.transform.SetParent(root);
-        floor.transform.localScale = new Vector3(24f, 0.1f, 20f);
-        floor.transform.position = new Vector3(12f, -0.05f, 10f);
+        var slabs = WorldKit.Group("Slabs", root);
 
         var floorMat = Resources.Load<Material>("Props/FloorMaterial");
-        if (floorMat != null) floor.GetComponent<Renderer>().sharedMaterial = floorMat;
+        WorldKit.Box("Floor", null, new Vector3(12f, -0.05f, 10f), new Vector3(24f, 0.1f, 20f), slabs, floorMat);
+
+        // Upper-floor slab / ground-floor ceiling, with an opening over the stairs.
+        Slab(slabs, 0f, 24f, 0f, StairZ0);
+        Slab(slabs, 0f, 24f, StairZ1, 20f);
+        Slab(slabs, 0f, StairX0, StairZ0, StairZ1);
+        Slab(slabs, StairX1, 24f, StairZ0, StairZ1);
+
+        // Flat roof over the upper storey (x 0..15, z 6..20) — disable this object to peek inside.
+        WorldKit.Box("Roof", null, new Vector3(7.5f, Upper + H + SlabThickness / 2f, 13f), new Vector3(15.4f, SlabThickness, 14.4f), root);
     }
 
-    static readonly Wall[] Walls =
+    static void Slab(Transform parent, float x0, float x1, float z0, float z1)
     {
-        // exterior (gap at 11-13 = entrance)
-        new Wall(0, 20, 24, 20),
-        new Wall(24, 20, 24, 0),
-        new Wall(24, 0, 13, 0),
-        new Wall(11, 0, 0, 0),
-        new Wall(0, 0, 0, 20),
-
-        // living <-> hallway (gap 3.5-5.5 = door), bathroom <-> hallway (solid)
-        new Wall(10, 0, 10, 3.5f),
-        new Wall(10, 5.5f, 10, 9),
-        new Wall(10, 11, 10, 20),
-
-        // kitchen <-> hallway (gap 3.5-5.5 = door), bedroom <-> hallway (solid)
-        new Wall(14, 0, 14, 3.5f),
-        new Wall(14, 5.5f, 14, 9),
-        new Wall(14, 11, 14, 20),
-
-        // living/kitchen north walls (solid, corridor is on the other side)
-        new Wall(0, 9, 10, 9),
-        new Wall(14, 9, 24, 9),
-
-        // bathroom south wall (gap 4-6 = door)
-        new Wall(0, 11, 4, 11),
-        new Wall(6, 11, 10, 11),
-
-        // bedroom south wall (gap 18-20 = door)
-        new Wall(14, 11, 18, 11),
-        new Wall(20, 11, 24, 11),
-    };
+        WorldKit.Box("Slab", null,
+            new Vector3((x0 + x1) / 2f, Upper - SlabThickness / 2f, (z0 + z1) / 2f),
+            new Vector3(x1 - x0, SlabThickness, z1 - z0), parent);
+    }
 
     static void BuildWalls(Transform root)
     {
-        var group = new GameObject("Walls").transform;
-        group.SetParent(root);
+        var walls = WorldKit.Group("Walls", root);
+        var doors = WorldKit.Group("Doors", root);
 
-        foreach (var w in Walls)
-        {
-            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            wall.tag = "Wall";
-            wall.transform.SetParent(group);
-
-            Vector2 mid = (w.a + w.b) / 2f;
-            float length = Vector2.Distance(w.a, w.b);
-            bool runsAlongX = Mathf.Approximately(w.a.y, w.b.y); // same z -> horizontal in plan
-
-            wall.transform.position = new Vector3(mid.x, WallHeight / 2f, mid.y);
-            wall.transform.localScale = runsAlongX
-                ? new Vector3(length, WallHeight, WallThickness)
-                : new Vector3(WallThickness, WallHeight, length);
-
-            var wallMat = Resources.Load<Material>("Props/WallMaterial");
-            if (wallMat != null) wall.GetComponent<Renderer>().sharedMaterial = wallMat;
-        }
+        // Wall(walls, doors, x1, z1, x2, z2, floor height, wall height, doorways...)
+        // Each DoorGap is (position along the wall, width); width defaults to 2 m.
+        // ---- ground floor ----
+        // south exterior, entrance
+        WorldKit.Wall(walls, doors, 0f, 0f, 24f, 0f, Ground, H, new WorldKit.DoorGap(12f));
+        // east exterior
+        WorldKit.Wall(walls, doors, 24f, 0f, 24f, 20f, Ground, H);
+        // north exterior
+        WorldKit.Wall(walls, doors, 0f, 20f, 24f, 20f, Ground, H);
+        // west exterior
+        WorldKit.Wall(walls, doors, 0f, 0f, 0f, 20f, Ground, H);
+        // hall | living room (door) and bedroom (door)
+        WorldKit.Wall(walls, doors, 9f, 0f, 9f, 20f, Ground, H, new WorldKit.DoorGap(5f), new WorldKit.DoorGap(13f));
+        // hall | kitchen (door) and powder room (door)
+        WorldKit.Wall(walls, doors, 15f, 0f, 15f, 20f, Ground, H, new WorldKit.DoorGap(5f), new WorldKit.DoorGap(17f));
+        // living room | bedroom
+        WorldKit.Wall(walls, doors, 0f, 10f, 9f, 10f, Ground, H);
+        // ensuite east wall (door)
+        WorldKit.Wall(walls, doors, 4f, 15f, 4f, 20f, Ground, H, new WorldKit.DoorGap(17f));
+        // ensuite south wall
+        WorldKit.Wall(walls, doors, 0f, 15f, 4f, 15f, Ground, H);
+        // powder room south wall
+        WorldKit.Wall(walls, doors, 15f, 15f, 19f, 15f, Ground, H);
+        // powder room east wall
+        WorldKit.Wall(walls, doors, 19f, 15f, 19f, 20f, Ground, H);
+        // stair alcove, west side (full height up to the slab)
+        WorldKit.Wall(walls, doors, 13f, 8f, 13f, 12.5f, Ground, H);
+        // ---- upper floor ----
+        // upper south exterior
+        WorldKit.Wall(walls, doors, 0f, 6f, 15f, 6f, Upper, H);
+        // upper east exterior
+        WorldKit.Wall(walls, doors, 15f, 6f, 15f, 20f, Upper, H);
+        // upper north exterior
+        WorldKit.Wall(walls, doors, 0f, 20f, 15f, 20f, Upper, H);
+        // upper west exterior
+        WorldKit.Wall(walls, doors, 0f, 6f, 0f, 20f, Upper, H);
+        // master bedroom | landing (door)
+        WorldKit.Wall(walls, doors, 9f, 6f, 9f, 20f, Upper, H, new WorldKit.DoorGap(11f));
+        // master bedroom | closet (door) and bathroom (door)
+        WorldKit.Wall(walls, doors, 0f, 15f, 9f, 15f, Upper, H, new WorldKit.DoorGap(2.25f), new WorldKit.DoorGap(6.75f));
+        // closet | bathroom
+        WorldKit.Wall(walls, doors, 4.5f, 15f, 4.5f, 20f, Upper, H);
+        // stairwell railing, west
+        WorldKit.Wall(walls, doors, 13f, 8f, 13f, 12.5f, Upper, Rail);
+        // stairwell railing, south
+        WorldKit.Wall(walls, doors, 13f, 8f, 15f, 8f, Upper, Rail);
     }
 
-    static readonly Door[] Doors =
+    static void BuildStairs(Transform root)
     {
-        new Door(12, 0,    2f, WallThickness), // entrance
-        new Door(10, 4.5f, WallThickness, 2f), // living
-        new Door(14, 4.5f, WallThickness, 2f), // kitchen
-        new Door(5,  11,   2f, WallThickness), // bathroom
-        new Door(19, 11,   2f, WallThickness), // bedroom
-    };
+        var stairs = WorldKit.Group("Stairs", root);
+        var mat = WorldKit.Mat("Wood");
+        float rise = Upper / Risers;
 
-    static void BuildDoors(Transform root)
-    {
-        var group = new GameObject("Doors").transform;
-        group.SetParent(root);
-
-        foreach (var d in Doors)
+        // The last riser (step 16) is the upper floor itself, so 15 solid steps are built.
+        for (int i = 1; i < Risers; i++)
         {
-            var door = new GameObject("Door");
-            door.tag = "Door";
-            door.transform.SetParent(group);
-            door.transform.position = d.pos;
-
-            var box = door.AddComponent<BoxCollider>();
-            box.size = d.size;
-            box.isTrigger = true; // metadata marker only, doesn't block movement
+            float h = rise * i;
+            WorldKit.Box("Step " + i, "Stairs",
+                new Vector3((StairX0 + StairX1) / 2f, h / 2f, StairZ0 + (i - 0.5f) * Tread),
+                new Vector3(StairX1 - StairX0, h, Tread), stairs, mat);
         }
     }
 
     static readonly Prop[] Props =
     {
-        new Prop { name = "Living Chair",  tag = "Chair",     model = "Chair",   pos = new Vector3(2, 0.4f, 1),        size = new Vector3(0.6f, 0.8f, 0.6f) },
-        new Prop { name = "Kitchen Chair", tag = "Chair",     model = "Chair",   pos = new Vector3(20, 0.4f, 1),       size = new Vector3(0.6f, 0.8f, 0.6f) },
-        new Prop { name = "Bedroom Chair", tag = "Chair",     model = "Chair",   pos = new Vector3(20, 0.4f, 13),      size = new Vector3(0.6f, 0.8f, 0.6f) },
-        new Prop { name = "Sofa",          tag = "Furniture", model = "Sofa",    pos = new Vector3(3, 0.4f, 8),        size = new Vector3(4, 0.8f, 1) },
-        new Prop { name = "Counter",       tag = "Furniture", model = "Counter", pos = new Vector3(18, 0.4f, 8),       size = new Vector3(4, 0.8f, 1) },
-        new Prop { name = "Sink",          tag = "Furniture", model = "Sink",    pos = new Vector3(2, 0.4f, 18.5f),    size = new Vector3(2, 0.8f, 1) },
-        new Prop { name = "Bed",           tag = "Furniture", model = "Bed",     pos = new Vector3(17.5f, 0.3f, 18),   size = new Vector3(3, 0.6f, 2) },
+        // living room (0..9, 0..10), door east z 4..6
+        new Prop(0, "Living Sofa", F, "Sofa", 4.5f, 7.4f, 3.2f, 0.85f, 1f, "Fabric"),
+        new Prop(0, "Coffee Table", F, "Table", 4.5f, 4.8f, 1.8f, 0.45f, 0.9f, "Wood"),
+        new Prop(0, "TV Stand", F, "TVStand", 4.5f, 0.5f, 2.4f, 0.5f, 0.5f, "Dark"),
+        new Prop(0, "Television", F, "TV", 4.5f, 0.45f, 1.6f, 0.9f, 0.1f, "Dark", 0.5f),
+        new Prop(0, "Living Armchair", C, "Chair", 1.5f, 4.8f, 0.9f, 0.85f, 0.9f, "Fabric"),
+        new Prop(0, "Bookshelf", F, "Bookshelf", 0.45f, 8.6f, 0.4f, 2f, 2f, "Wood"),
+        new Prop(0, "Side Table", F, "Table", 7.9f, 8.8f, 0.5f, 0.6f, 0.5f, "Wood"),
+        new Prop(0, "Floor Lamp", F, "Lamp", 0.6f, 1f, 0.35f, 1.6f, 0.35f, "Steel"),
+
+        // hall
+        new Prop(0, "Console Table", F, "Table", 9.5f, 2f, 0.5f, 0.9f, 1.4f, "Wood"),
+        new Prop(0, "Coat Rack", F, "CoatRack", 14.65f, 1.5f, 0.4f, 1.8f, 0.4f, "Wood"),
+
+        // kitchen (15..24, 0..15) + dining (19..24, 15..20), door west z 4..6
+        new Prop(0, "Fridge", F, "Fridge", 16f, 0.6f, 1f, 1.9f, 0.9f, "Steel"),
+        new Prop(0, "Counter West", F, "Counter", 17.5f, 0.45f, 2f, 0.9f, 0.7f, "White"),
+        new Prop(0, "Stove", F, "Stove", 19.5f, 0.45f, 1f, 0.9f, 0.7f, "Dark"),
+        new Prop(0, "Range Hood", F, "Hood", 19.5f, 0.4f, 1f, 0.6f, 0.6f, "Steel", 1.8f),
+        new Prop(0, "Kitchen Sink", F, "Sink", 21f, 0.45f, 2f, 0.9f, 0.7f, "Steel"),
+        new Prop(0, "Counter East", F, "Counter", 23f, 0.45f, 1.8f, 0.9f, 0.7f, "White"),
+        new Prop(0, "Counter Wall", F, "Counter", 23.55f, 3f, 0.7f, 0.9f, 3.6f, "White"),
+        new Prop(0, "Kitchen Island", F, "Counter", 19.5f, 4.5f, 3f, 0.95f, 1.2f, "Wood"),
+        new Prop(0, "Bar Stool 1", C, "Stool", 18.6f, 5.8f, 0.4f, 0.7f, 0.4f, "Dark"),
+        new Prop(0, "Bar Stool 2", C, "Stool", 19.5f, 5.8f, 0.4f, 0.7f, 0.4f, "Dark"),
+        new Prop(0, "Bar Stool 3", C, "Stool", 20.4f, 5.8f, 0.4f, 0.7f, 0.4f, "Dark"),
+        new Prop(0, "Dining Table", F, "Table", 20f, 11.5f, 2.4f, 0.75f, 1.2f, "Wood"),
+        new Prop(0, "Dining Chair 1", C, "Chair", 19.5f, 10.4f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "Dining Chair 2", C, "Chair", 20.5f, 10.4f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "Dining Chair 3", C, "Chair", 19.5f, 12.6f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "Dining Chair 4", C, "Chair", 20.5f, 12.6f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "Dining Chair 5", C, "Chair", 18.3f, 11.5f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "Dining Chair 6", C, "Chair", 21.7f, 11.5f, 0.5f, 0.9f, 0.5f, "Wood"),
+        new Prop(0, "China Cabinet", F, "Cabinet", 23.5f, 14f, 0.5f, 1.7f, 2f, "Wood"),
+        new Prop(0, "Pantry Shelf", F, "Shelf", 23.55f, 18.2f, 0.5f, 2f, 2.6f, "Wood"),
+
+        // powder room (15..19, 15..20), door west z 16..18
+        new Prop(0, "Powder Toilet", F, "Toilet", 17.5f, 19.5f, 0.45f, 0.45f, 0.75f, "White"),
+        new Prop(0, "Powder Vanity", F, "Vanity", 18.6f, 17f, 0.5f, 0.9f, 0.9f, "White"),
+
+        // ground bedroom (0..9, 10..20), door east z 12..14
+        new Prop(0, "Bed", F, "Bed", 6.5f, 18.75f, 1.6f, 0.6f, 2.1f, "Linen"),
+        new Prop(0, "Nightstand Left", F, "Nightstand", 5.2f, 19.5f, 0.5f, 0.5f, 0.5f, "Wood"),
+        new Prop(0, "Nightstand Right", F, "Nightstand", 7.8f, 19.5f, 0.5f, 0.5f, 0.5f, "Wood"),
+        new Prop(0, "Wardrobe", F, "Wardrobe", 2f, 10.6f, 2f, 2f, 0.6f, "Wood"),
+        new Prop(0, "Dresser", F, "Dresser", 0.5f, 12.5f, 0.5f, 0.9f, 1.6f, "Wood"),
+        new Prop(0, "Desk", F, "Desk", 5.5f, 10.6f, 1.4f, 0.75f, 0.7f, "Wood"),
+        new Prop(0, "Bedroom Chair", C, "Chair", 5.5f, 11.5f, 0.5f, 0.9f, 0.5f, "Dark"),
+
+        // ensuite (0..4, 15..20), door east z 16..18
+        new Prop(0, "Ensuite Toilet", F, "Toilet", 0.5f, 19.2f, 0.75f, 0.45f, 0.45f, "White"),
+        new Prop(0, "Ensuite Vanity", F, "Vanity", 2.5f, 19.55f, 1f, 0.9f, 0.5f, "White"),
+        new Prop(0, "Ensuite Shower", F, "Shower", 0.6f, 15.6f, 1f, 2f, 1f, "Steel"),
+
+        // hall upstairs / landing
+        new Prop(1, "Landing Bookshelf", F, "Bookshelf", 14.65f, 18f, 0.4f, 2f, 2f, "Wood"),
+
+        // master bedroom (0..9, 6..15), door east z 10..12
+        new Prop(1, "Master Bed", F, "Bed", 1.2f, 10.5f, 2.1f, 0.6f, 2f, "Linen"),
+        new Prop(1, "Master Nightstand Left", F, "Nightstand", 0.4f, 8.7f, 0.5f, 0.5f, 0.5f, "Wood"),
+        new Prop(1, "Master Nightstand Right", F, "Nightstand", 0.4f, 12.3f, 0.5f, 0.5f, 0.5f, "Wood"),
+        new Prop(1, "Bed Bench", F, "Bench", 3.6f, 10.5f, 0.6f, 0.5f, 1.8f, "Fabric"),
+        new Prop(1, "Master Dresser", F, "Dresser", 5f, 6.5f, 1.8f, 0.9f, 0.5f, "Wood"),
+        new Prop(1, "Reading Chair", C, "Chair", 7.5f, 7f, 0.8f, 0.85f, 0.8f, "Fabric"),
+        new Prop(1, "Reading Table", F, "Table", 8.2f, 8.3f, 0.5f, 0.5f, 0.5f, "Wood"),
+
+        // closet (0..4.5, 15..20), door south x 1.25..3.25
+        new Prop(1, "Clothes Rack", F, "Rack", 0.45f, 17.5f, 0.5f, 1.8f, 4f, "Steel"),
+        new Prop(1, "Closet Shelves", F, "Shelf", 4.15f, 17.5f, 0.5f, 2f, 4f, "Wood"),
+        new Prop(1, "Shoe Rack", F, "Shelf", 2.25f, 19.6f, 1.6f, 0.8f, 0.5f, "Wood"),
+        new Prop(1, "Closet Island", F, "Dresser", 2.25f, 17.5f, 1f, 0.9f, 1.4f, "Wood"),
+
+        // master bath (4.5..9, 15..20), door south x 5.75..7.75
+        new Prop(1, "Bathtub", F, "Bathtub", 7.9f, 19.5f, 1.8f, 0.55f, 0.75f, "White"),
+        new Prop(1, "Master Vanity", F, "Vanity", 8.6f, 17.2f, 0.5f, 0.9f, 2f, "White"),
+        new Prop(1, "Master Toilet", F, "Toilet", 4.98f, 17.5f, 0.75f, 0.45f, 0.45f, "White"),
+        new Prop(1, "Master Shower", F, "Shower", 5.15f, 19.4f, 1f, 2f, 1f, "Steel"),
     };
 
     static void BuildProps(Transform root)
     {
-        var group = new GameObject("Props").transform;
-        group.SetParent(root);
+        var group = WorldKit.Group("Props", root);
 
         foreach (var p in Props)
         {
+            float baseY = p.level == 0 ? Ground : Upper;
+            Vector3 center = new Vector3(p.pos.x, baseY + p.y0 + p.size.y / 2f, p.pos.z);
+
             var prefab = Resources.Load<GameObject>($"Props/{p.model}");
             GameObject obj;
 
             if (prefab != null)
             {
                 obj = (GameObject)PrefabUtility.InstantiatePrefab(prefab); // keeps the prefab link
+                obj.tag = p.tag;
+                obj.transform.SetParent(group, false);
+                obj.transform.localPosition = center;
             }
             else
             {
-                obj = GameObject.CreatePrimitive(PrimitiveType.Cube); // no model yet — blockout box
-                obj.transform.localScale = p.size;
+                obj = WorldKit.Box(p.name, p.tag, center, p.size, group, WorldKit.Mat(p.mat));
             }
 
             obj.name = p.name;
-            obj.tag = p.tag;
-            obj.transform.SetParent(group);
-            obj.transform.position = p.pos;
         }
     }
 
-    // Creates any of the given tags that don't already exist in the project.
-    static void EnsureTags(params string[] tags)
+    static void BuildLights(Transform root)
     {
-        var asset = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0];
-        var so = new SerializedObject(asset);
-        var tagsProp = so.FindProperty("tags");
+        var lights = WorldKit.Group("Lights", root);
 
-        foreach (var tag in tags)
-        {
-            bool exists = false;
-            for (int i = 0; i < tagsProp.arraySize; i++)
-                if (tagsProp.GetArrayElementAtIndex(i).stringValue == tag) { exists = true; break; }
-
-            if (!exists)
-            {
-                tagsProp.InsertArrayElementAtIndex(tagsProp.arraySize);
-                tagsProp.GetArrayElementAtIndex(tagsProp.arraySize - 1).stringValue = tag;
-            }
-        }
-        so.ApplyModifiedProperties();
+        WorldKit.AddLight(lights, "Living Room", new Vector3(4.5f, 2.6f, 5f), 9f);
+        WorldKit.AddLight(lights, "Bedroom", new Vector3(4.5f, 2.6f, 15f), 9f);
+        WorldKit.AddLight(lights, "Ensuite", new Vector3(2f, 2.6f, 17.5f), 5f);
+        WorldKit.AddLight(lights, "Hall", new Vector3(12f, 2.6f, 10f), 9f);
+        WorldKit.AddLight(lights, "Kitchen", new Vector3(19.5f, 2.6f, 7.5f), 10f);
+        WorldKit.AddLight(lights, "Dining", new Vector3(21.5f, 2.6f, 17.5f), 6f);
+        WorldKit.AddLight(lights, "Powder Room", new Vector3(17f, 2.6f, 17.5f), 5f);
+        WorldKit.AddLight(lights, "Master Bedroom", new Vector3(4.5f, 5.8f, 10.5f), 9f);
+        WorldKit.AddLight(lights, "Closet", new Vector3(2.25f, 5.8f, 17.5f), 5f);
+        WorldKit.AddLight(lights, "Master Bath", new Vector3(6.75f, 5.8f, 17.5f), 5f);
+        WorldKit.AddLight(lights, "Landing", new Vector3(12f, 5.8f, 13f), 9f);
+        WorldKit.AddLight(lights, "Hall South", new Vector3(12f, 2.6f, 4f), 7f);
+        WorldKit.AddLight(lights, "Hall North", new Vector3(12f, 2.6f, 16f), 7f);
+        WorldKit.AddLight(lights, "Kitchen Centre", new Vector3(19.5f, 2.6f, 8f), 7f);
+        WorldKit.AddLight(lights, "Dining Table", new Vector3(19.5f, 2.6f, 11.5f), 6f);
     }
 }
