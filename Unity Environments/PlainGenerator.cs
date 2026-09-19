@@ -44,6 +44,7 @@ public static class PlainGenerator
         var tree = new GameObject("Tree").transform;
         tree.SetParent(root, false);
         tree.localPosition = position;
+        if (TreeTag != null) tree.gameObject.tag = TreeTag; // tag the root too, so trunk + canopy read as one object
 
         var trunk = WorldKit.Mat("Trunk");
         var leaves = WorldKit.Mat("Leaves");

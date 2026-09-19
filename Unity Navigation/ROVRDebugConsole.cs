@@ -17,18 +17,33 @@ namespace ROVR
 
         void OnEnable()
         {
-            resolver.OnClarificationNeeded += msg => lastStatus = $"[clarify] {msg}";
-            resolver.OnError += msg => lastStatus = $"[error] {msg}";
-            resolver.OnCommandResolved += cmd =>
-            {
-                if (!cmd.IsClarification)
-                    lastStatus = $"[ok] executing {cmd.steps.Length} step(s)";
-            };
+            resolver.OnClarificationNeeded += HandleClarification;
+            resolver.OnStatus += HandleStatus;
+            resolver.OnError += HandleError;
+            resolver.OnCommandResolved += HandleResolved;
+        }
+
+        void OnDisable()
+        {
+            resolver.OnClarificationNeeded -= HandleClarification;
+            resolver.OnStatus -= HandleStatus;
+            resolver.OnError -= HandleError;
+            resolver.OnCommandResolved -= HandleResolved;
+        }
+
+        void HandleClarification(string message) { lastStatus = "[asks] " + message; }
+        void HandleStatus(string message) { lastStatus = "[note] " + message; }
+        void HandleError(string message) { lastStatus = "[error] " + message; }
+
+        void HandleResolved(NavigationCommand command)
+        {
+            if (!command.IsClarification)
+                lastStatus = "[ok] " + command.steps.Length + " step(s) - LLM " + resolver.LastLatencySeconds.ToString("F2") + " s";
         }
 
         void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 460, 130), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(10, 10, 520, 150), GUI.skin.box);
             GUILayout.Label("ROVR text-command stub (stand-in for voice input)");
 
             GUI.SetNextControlName("ROVRInput");
@@ -46,6 +61,7 @@ namespace ROVR
             }
 
             GUILayout.Label(lastStatus);
+            GUILayout.Label("\"a bit\" = " + resolver.Habits.BitMeters.ToString("F2") + " m");
             GUILayout.EndArea();
         }
     }
