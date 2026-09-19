@@ -4,6 +4,8 @@ The Semantic Intent Resolution layer from Thesis Chapter 6: turns a natural-lang
 navigation command into deterministic Unity movement via a locally-hosted LLM, without any
 cloud API dependency (Section 6.3.1).
 
+For the whole-project setup (worlds and navigation together), see the [repository README](../README.md); the worlds themselves are documented in [`Unity Environments/`](../Unity%20Environments/README.md).
+
 This pass wires up the whole loop **except real speech input** — see
 [`ROVRDebugConsole.cs`](ROVRDebugConsole.cs) for why, and what to swap in later.
 
