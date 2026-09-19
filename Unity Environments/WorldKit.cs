@@ -126,6 +126,25 @@ public static class WorldKit
         return Prim(PrimitiveType.Cube, name, tag, localCenter, size, parent, mat);
     }
 
+    // Real prefabs often ship without colliders. If the instance has no solid one, add a box
+    // that fits its renderers so it still blocks movement like the blockout version does.
+    public static void EnsureCollider(GameObject obj)
+    {
+        foreach (var c in obj.GetComponentsInChildren<Collider>())
+            if (c.enabled && !c.isTrigger) return;
+
+        var renderers = obj.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0) return;
+
+        var bounds = renderers[0].bounds;
+        foreach (var r in renderers) bounds.Encapsulate(r.bounds);
+
+        var scale = obj.transform.lossyScale;
+        var box = obj.AddComponent<BoxCollider>();
+        box.center = obj.transform.InverseTransformPoint(bounds.center);
+        box.size = new Vector3(bounds.size.x / Mathf.Abs(scale.x), bounds.size.y / Mathf.Abs(scale.y), bounds.size.z / Mathf.Abs(scale.z));
+    }
+
     public static void AddLight(Transform parent, string name, Vector3 localPos, float range)
     {
         var go = new GameObject(name + " Light");

@@ -28,6 +28,10 @@ namespace ROVR
         {
             controller = GetComponent<CharacterController>();
             if (pov == null) pov = Camera.main != null ? Camera.main.transform : transform;
+
+            // The worlds are flat and there's no gravity here, so a step-up would leave the avatar
+            // hovering on top of whatever it hopped onto. Walls, props and the tree just block.
+            controller.stepOffset = 0f;
         }
 
         public void Execute(NavigationCommand command)
