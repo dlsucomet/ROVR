@@ -4,25 +4,37 @@ The Semantic Intent Resolution layer from Thesis Chapter 6: turns a natural-lang
 navigation command into deterministic Unity movement via a locally-hosted LLM, without any
 cloud API dependency (Section 6.3.1).
 
-This first pass wires up the whole loop **except real speech input** — see
+This pass wires up the whole loop **except real speech input** — see
 [`ROVRDebugConsole.cs`](ROVRDebugConsole.cs) for why, and what to swap in later.
+
+## How a command flows
+
+```
+utterance
+  -> InterruptModule        "stop" / "wait, I mean left": halts NOW, bypassing the LLM
+  -> FOVMetadataGrounding   raycast matrix over the whole view -> what the user can see
+  -> Ollama (Gemma 3n)      + previous command + pending question -> schema-constrained JSON
+  -> engine checks          closed-world validation, "a bit" -> metres, clarify or execute
+  -> NavigationController   CharacterController movement, reports how it ended
+```
 
 ## Files
 
 | File | Role |
 |---|---|
-| `NavigationCommand.cs` | The four-vector kinematic schema (Action / Direction / Magnitude / Condition) and the JSON schema handed to Ollama for structured output. |
-| `OllamaClient.cs` | HTTP client for a local Ollama server; requests schema-constrained JSON. |
-| `FOVMetadataGrounding.cs` | Raycast fan from the HMD forward vector; builds the POV-scoped, Closed-World object list injected into every prompt. |
-| `InterruptModule.cs` | Keyword-based halt/self-correction detector that bypasses the LLM entirely. |
-| `NavigationController.cs` | `CharacterController`-driven executor: continuous / magnitude / conditional moves, discrete snap-turns, sequential chaining. |
-| `SemanticIntentResolver.cs` | Orchestrates the above: utterance → interrupt check → metadata scan → LLM → execute or clarify. |
-| `ROVRDebugConsole.cs` | OnGUI text-input harness standing in for voice, so the pipeline is testable without a microphone. |
+| `NavigationCommand.cs` | Command schema (Action / Direction / Amount+Magnitude / Condition), the JSON schema sent to Ollama, and outcomes. Unusable model output becomes a clarification, never a silent no-op. |
+| `OllamaClient.cs` | HTTP client for a local Ollama server. Keeps the model loaded, warms it up at start, times each request (`LastLatencySeconds`). |
+| `FOVMetadataGrounding.cs` | Raycast matrix (21×13 over 100°×80°). Sees through door triggers, is blocked by solids, keeps each object separate, and only reports tags in `groundedTags`. |
+| `InterruptModule.cs` | Halt detection. Only a *leading* halt word counts; only an explicit correction after it is kept. |
+| `MovementHabits.cs` | How far "a bit" is: starts at 0.5 m, adapts to the user, resets per participant. |
+| `NavigationController.cs` | Movement: fixed speed, smooth stop at a target, instant 90° snap-turns about the head, "turn until you see X", blocked detection. |
+| `SemanticIntentResolver.cs` | Orchestrates all of it and enforces the rules below in code. |
+| `ROVRDebugConsole.cs` | OnGUI text box standing in for voice input. |
 
 ## Setup
 
 1. Install [Ollama](https://ollama.com).
-2. Pull the model the thesis specifies (Gemma 3n E4B — the paper's "Gemma 4 E4B" refers to this; it's the model with native audio-input support):
+2. Pull the model the thesis specifies (Gemma 3n E4B — the paper's "Gemma 4 E4B" refers to this):
    ```bash
    ollama pull gemma3n:e4b
    ```
@@ -30,20 +42,34 @@ This first pass wires up the whole loop **except real speech input** — see
    ```bash
    ollama serve
    ```
-4. In Unity, add all seven scripts under `Assets/Scripts/ROVR/` (adjust the path comment at the top of each file if you use a different location).
+4. In Unity, add all the scripts under `Assets/Scripts/ROVR/`.
 5. On a GameObject with a `CharacterController` (your avatar/rig), add:
-   - `NavigationController`
    - `FOVMetadataGrounding` (point `pov` at the HMD camera)
+   - `NavigationController` (same `pov`; it finds `FOVMetadataGrounding` on the same object)
    - `OllamaClient`
-   - `SemanticIntentResolver` (wire its `ollama`, `grounding`, `controller` fields)
+   - `SemanticIntentResolver` (it finds the other three on the same object)
    - `ROVRDebugConsole` (wire its `resolver` field)
-6. Tag walls/doors/furniture/goal objects the way the world generators already do (`Wall`, `Door`, `Chair`, `Furniture`, `Goal`) — these are exactly the tags that show up in the metadata list the LLM sees.
-7. Enter Play mode, type a command into the on-screen text field (e.g. `move forward 5 meters`, `turn left`, `move forward until you hit a wall`, `stop`), and press Send.
+6. Generate the worlds (`Unity Environments/`). The tags the LLM can see are set by `groundedTags` on `FOVMetadataGrounding` — by default **Wall, Door, Chair, Tree**. Furniture and Goal are deliberately left out (Thesis 7.1.2: the House's metadata is doors, walls and chairs; the maze has no semantic objects). Add a tag to that list to expose it.
+7. Enter Play mode and type commands, e.g. `move forward 5 meters`, `move forward until you reach the door`, `a bit more`, `turn around until you see the tree`, `stop`.
+
+Call `SemanticIntentResolver.ResetSession()` between participants: it clears the previous command and resets "a bit" to 0.5 m.
+
+## Behaviour worth knowing
+
+- **Closed world, enforced by the engine.** A move may only target something in the current view. If the model returns a target that isn't (or isn't a known object type), the engine replaces it with a clarification question. The one exception is `turn ... until you see X` — that is how X gets found.
+- **One command of memory.** The previous command, how it ended (completed / halted / blocked), and any question still waiting for an answer go back to the model, so "a bit more" and "the other way" work. Object knowledge never comes from that memory, only from the current view. *This relaxes the strict statelessness in Thesis 5.5.4 by exactly one command — the thesis text should say so.*
+- **"A bit".** The model only labels a move `small`; the engine converts it. Repeating a nudge in the same direction soon after grows it (×1.15), reversing right after shrinks it (×0.85), bounded to 0.2–2 m.
+- **Halts always win.** A halt cancels any request still waiting on the LLM, so a late reply can't restart movement. A newer utterance also supersedes an older one that hasn't been answered yet. "Wait, I mean left" halts immediately, then runs "left"; "stop moving" or "wait a bit" never restart anything.
+- **Turns** are whole 90° snaps (`turn around` = two), instant, and pivot about the head so the view doesn't shift.
+- **Stopping at a target** is measured from the avatar's body surface (stop gap 0.5 m, eased over the last metre), so it works for any rig radius. A step that can't make progress ends as *Blocked* and aborts the rest of the chain, with a message to the user.
+- **Nothing fails silently.** Unusable model output, unknown or unseen objects, blocked moves, and turns that find nothing all produce a message.
+- The step offset is forced to 0 so the avatar can't hop onto props and hover (the worlds are flat and there is no gravity).
 
 ## Known gaps / next steps
 
-- **No real voice input yet.** `ROVRDebugConsole` is a deliberate stand-in — next step is Unity `Microphone` capture feeding a speech-to-text stage (or native audio input to Ollama's multimodal endpoint, once that's stable) ahead of `SemanticIntentResolver.SubmitUtterance`.
-- **No controller-based (joystick) locomotion yet** for the between-subjects control condition (Section 7.1) — this pass only covers the ROVR/voice arm.
-- **No Task Completion Time logging** (Section 7.1.3) hooked up yet.
-- **Interrupt Module is keyword-based on a complete string**, not a true continuous-stream interrupt (Section 5.5.2 assumes the halt can land mid-utterance). This is the correct behavior once real streaming ASR is in place — see the comment in `InterruptModule.cs`.
-- Gravity/ground-snapping isn't simulated — vertical motion only happens on explicit up/down commands, which matches the flat, single-story study environments but won't hold if that changes.
+- **No real voice input yet.** `ROVRDebugConsole` is a deliberate stand-in — next is Unity `Microphone` capture feeding speech-to-text (or native audio to Ollama's multimodal endpoint, if Ollama supports audio for Gemma 3n — verify before relying on it) ahead of `SubmitUtterance`.
+- **Interrupt Module works on a complete string**, not a live stream (Section 5.5.2 assumes a halt can land mid-utterance). Swap in a streaming check once real ASR exists.
+- **The prompt is untested against a real model in this repo.** Everything deterministic is tested; the exact wording the model responds to should be checked once `gemma3n:e4b` is pulled.
+- **No controller (joystick) arm yet** for the between-subjects control condition (Section 7.1) — it must move through `CharacterController.Move` with the same step offset, and use the same snap-turn and speed settings.
+- **No Task Completion Time logging** (Section 7.1.3) hooked up yet. `OllamaClient.LastLatencySeconds` covers LLM latency only.
+- Ground-following isn't simulated (no gravity, no stairs) — vertical motion only happens on explicit up/down commands.

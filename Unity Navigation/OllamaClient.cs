@@ -20,6 +20,7 @@ namespace ROVR
         [SerializeField] string endpoint = "http://localhost:11434/api/chat";
         [SerializeField] string model = "gemma3n:e4b";
         [SerializeField] int timeoutSeconds = 30;
+        const string KeepAlive = "30m"; // keep the model resident between commands
 
         [Serializable]
         class OllamaMessage
@@ -34,9 +35,41 @@ namespace ROVR
             public OllamaMessage message;
         }
 
-        public void RequestCommand(string systemPrompt, string userPrompt, Action<NavigationCommand> onSuccess, Action<string> onError)
+        // Seconds the last successful request took, for the thesis's latency testing.
+        public float LastLatencySeconds { get; private set; }
+        public event Action<float> OnLatency;
+
+        public virtual void RequestCommand(string systemPrompt, string userPrompt, Action<NavigationCommand> onSuccess, Action<string> onError)
         {
             StartCoroutine(RequestCoroutine(systemPrompt, userPrompt, onSuccess, onError));
+        }
+
+        // Loads the model into memory now (an empty message list does exactly that in Ollama), so the
+        // first spoken command isn't the one that pays the multi-second load.
+        public void WarmUp()
+        {
+            StartCoroutine(WarmUpCoroutine());
+        }
+
+        IEnumerator WarmUpCoroutine()
+        {
+            string body = "{\"model\":\"" + JsonEscape(model) + "\",\"messages\":[],\"keep_alive\":\"" + KeepAlive + "\"}";
+            var request = new UnityWebRequest(endpoint, "POST");
+            try
+            {
+                request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
+                request.timeout = 120;
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                    Debug.LogWarning("[ROVR] Ollama warm-up failed: " + request.error);
+            }
+            finally
+            {
+                request.Dispose();
+            }
         }
 
         IEnumerator RequestCoroutine(string systemPrompt, string userPrompt, Action<NavigationCommand> onSuccess, Action<string> onError)
@@ -52,7 +85,9 @@ namespace ROVR
                 request.SetRequestHeader("Content-Type", "application/json");
                 request.timeout = timeoutSeconds;
 
+                float sentAt = Time.realtimeSinceStartup;
                 yield return request.SendWebRequest();
+                LastLatencySeconds = Time.realtimeSinceStartup - sentAt;
 
                 if (request.result != UnityWebRequest.Result.Success)
                 {
@@ -89,6 +124,7 @@ namespace ROVR
                     yield break;
                 }
 
+                OnLatency?.Invoke(LastLatencySeconds);
                 onSuccess?.Invoke(NavigationCommand.FromRaw(raw));
             }
             finally
@@ -108,6 +144,7 @@ namespace ROVR
             sb.Append("],");
             sb.Append("\"stream\":false,");
             sb.Append("\"format\":").Append(NavigationCommandSchema.Json).Append(',');
+            sb.Append("\"keep_alive\":\"").Append(KeepAlive).Append("\",");
             sb.Append("\"options\":{\"temperature\":0}");
             sb.Append('}');
             return sb.ToString();
