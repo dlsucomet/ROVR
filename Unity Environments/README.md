@@ -84,12 +84,16 @@ Collision only holds if the player moves through `CharacterController.Move`. Set
 
 ## Customising the look
 
-The worlds are grey blockouts with flat colours. Materials are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene. To use real assets, put them in `Assets/Resources/Props/`; anything missing falls back to the blockout.
+The Maze and the Plain are grey blockouts with flat colours. Materials are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene.
+
+**The House uses the [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit)** (CC0, credit optional). Its 28 models are in `Assets/Resources/Props/` and `HouseGenerator.cs` places them, so the furnishings, walls, ceiling and floor share one low-poly, flat-colour style. The house is about 21,000 triangles of furniture in total.
 
 | Put this in `Assets/Resources/Props/` | To replace |
 |---|---|
-| `WallMaterial.mat` | Every wall (all three worlds) |
-| `FloorMaterial.mat` | Every floor |
-| `<Model>.prefab` | The furnishing with that model name |
+| `WallMaterial.mat` | Every wall. Also overrides the House's built-in off-white walls and ceiling |
+| `FloorMaterial.mat` | Every floor. Also overrides the House's built-in peach floor |
+| `<name>.fbx` / `<name>.prefab` | The furnishing that uses that model name in `HouseGenerator.cs` |
 
-House model names: `Bed`, `Bookshelf`, `Cabinet`, `Chair`, `CoatRack`, `Counter`, `Desk`, `Dresser`, `Fridge`, `Hood`, `Lamp`, `Nightstand`, `Shelf`, `Shower`, `Sink`, `Sofa`, `Stool`, `Stove`, `TV`, `TVStand`, `Table`, `Toilet`, `Vanity`, `Wardrobe`. Prefabs keep their prefab link, and get a collider added automatically if they don't have one. To change a furnishing's position or size, edit its `new Prop(...)` line in `HouseGenerator.cs`.
+Each `new Prop(...)` line in `HouseGenerator.cs` names its model (`"loungeSofa"`, `"bedDouble"`, ...), where it stands, which way it faces (`yaw`: 0 north, 90 east, 180 south, 270 west), and whether it sits against the wall behind it (`back`), repeats to fill a run (`row`) or needs shrinking (`scale`). A missing model falls back to the old coloured box, with a warning in the Console. All models share one scale (`KitScale`), which keeps the kit's real-world proportions. The prop's root carries the `Chair` / `Furniture` tag and one solid box collider.
+
+Two constants at the top of `HouseGenerator.cs` are worth knowing about: `NativeFrontYaw` (set it to `0` if every piece of furniture faces backwards after generating) and `KitScale`.
