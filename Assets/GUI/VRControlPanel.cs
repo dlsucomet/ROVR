@@ -33,6 +33,7 @@ public class VRControlPanel : MonoBehaviour
     private Text micButtonText;
 
     private WhisperStream _stream;
+    private CharacterController _controller;
     private Vector3 _moveDirection = Vector3.zero;
     private float _moveTimer = 0f;
     private string _lastCommand = "";
@@ -41,6 +42,7 @@ public class VRControlPanel : MonoBehaviour
     private async void Start()
     {
         if (playerBody == null) playerBody = transform;
+        _controller = playerBody.GetComponent<CharacterController>();
         if (vrCameraTransform == null && Camera.main != null) vrCameraTransform = Camera.main.transform;
 
         // Force initial spawn rotation to plain destination facing 0 degrees Y
@@ -61,6 +63,15 @@ public class VRControlPanel : MonoBehaviour
         // Initialize Whisper Stream
         if (whisperManager != null && microphoneRecord != null)
         {
+            // The stream shuts down for good whenever the mic stops, so the mic must run until muted.
+            microphoneRecord.loop = true;
+            microphoneRecord.vadStop = false;
+            microphoneRecord.echo = false;
+            // Only transcribe detected speech (Whisper invents text for silence), one segment per utterance.
+            whisperManager.useVad = true;
+            // A continuous stream would otherwise feed every past transcription back in as the prompt.
+            whisperManager.updatePrompt = false;
+
             _stream = await whisperManager.CreateStream(microphoneRecord);
             _stream.OnSegmentFinished += OnSegmentFinished;
         }
@@ -89,7 +100,7 @@ public class VRControlPanel : MonoBehaviour
         // Handle Active Movement Over Time (XZ plane)
         if (_moveTimer > 0f)
         {
-            playerBody.Translate(_moveDirection * moveSpeed * Time.deltaTime, Space.World);
+            _controller.Move(_moveDirection * moveSpeed * Time.deltaTime);
             _moveTimer -= Time.deltaTime;
         }
     }
@@ -98,9 +109,12 @@ public class VRControlPanel : MonoBehaviour
     {
         if (destination != null)
         {
+            // A live CharacterController can snap back to its old position, so pause it while moving.
+            _controller.enabled = false;
             playerBody.position = destination.position;
             playerBody.rotation = Quaternion.Euler(0f, targetYRotation, 0f);
-            
+            _controller.enabled = true;
+
             // Recenter XR tracking origin so headset layout matches world orientation cleanly
             InputTracking.Recenter();
 
@@ -121,8 +135,8 @@ public class VRControlPanel : MonoBehaviour
         if (_isMicMuted)
         {
             // Muted state
-            if (microphoneRecord.IsRecording) microphoneRecord.StopRecord();
             _stream.StopStream();
+            if (microphoneRecord.IsRecording) microphoneRecord.StopRecord();
             microphoneRecord.enabled = false;
 
             if (micButtonText != null) micButtonText.text = "Unmute";
@@ -157,12 +171,6 @@ public class VRControlPanel : MonoBehaviour
 
             Debug.Log($"<color=green><b>[Subtitles Updated]:</b> {spokenText}</color>");
             ParseAndExecuteCommand(spokenText);
-        }
-
-        // Keep loop active
-        if (!_isMicMuted && microphoneRecord != null && !microphoneRecord.IsRecording)
-        {
-            microphoneRecord.StartRecord();
         }
     }
 
