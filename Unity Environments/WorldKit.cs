@@ -34,6 +34,8 @@ public static class WorldKit
         { "Leaves", new Color(0.20f, 0.55f, 0.22f) },
         { "Goal",   new Color(0.15f, 0.75f, 0.25f) },
         { "Start",  new Color(0.20f, 0.40f, 0.90f) },
+        { "HouseWall",  new Color(0.95f, 0.94f, 0.90f) },   // House only: soft off-white walls and ceiling
+        { "HouseFloor", new Color(0.90f, 0.76f, 0.58f) },   // House only: warm peach floor (matches the Kenney kit)
     };
 
     public static void EnsureTags(params string[] tags)
