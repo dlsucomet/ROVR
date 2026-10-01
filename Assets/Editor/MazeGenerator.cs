@@ -9,6 +9,19 @@
 // outside the entrance facing in; the green Goal pad is just outside the exit.
 // The plan is drawn in rovr-maze-plan.svg.
 //
+// LOOK: a hedge maze on a pale gravel floor. The walls and floor use the "ROVR/WorldSpaceTiled"
+// shader (Assets/Shaders), which tiles a texture by real-world position, so the texture is not
+// stretched along the long stretched-cube walls and there are no seams between wall pieces.
+// The two tileable textures are in Assets/Resources/Props/Maze. Which material is used, in order:
+//     1. Assets/Resources/Props/MazeWall.mat   / MazeFloor.mat   (drop yours in to override)
+//     2. Assets/Resources/Props/WallMaterial.mat / FloorMaterial.mat (the old "all worlds" slots)
+//     3. the built-in hedge and gravel (generated once into Props/Generated)
+//     4. flat green / sand, if the shader or textures are missing
+// To change how big the texture looks, select ROVR_MazeWallTiled / ROVR_MazeFloorTiled in
+// Assets/Resources/Props/Generated and edit "Metres per texture repeat".
+// The walls carry no tagged decoration on purpose: only `Wall` is visible to the LLM grounding,
+// and the maze has no landmarks, so the look must stay uniform (a distinctive wall = a hint).
+//
 // Needs WorldKit.cs alongside it.
 using UnityEngine;
 using UnityEditor;
@@ -18,6 +31,11 @@ public static class MazeGenerator
     const float CellSize = 4f;
     const float Margin = 8f;       // floor extends this far beyond the maze on every side
     const int EntranceRow = 0;     // row 0 is the south-most row
+
+    const string HedgeTexture = "Assets/Resources/Props/Maze/MazeHedge.png";
+    const string GroundTexture = "Assets/Resources/Props/Maze/MazeGround.png";
+    const float HedgeTileSize = 3f;    // metres per texture repeat on the walls (= wall height)
+    const float GroundTileSize = 4f;   // metres per texture repeat on the floor (= one cell)
 
     // First line is the north edge. Each cell is "+---+" wide / "|   |" tall; a gap in the outer
     // wall (a space where '|' or "---" would be) is an opening.
@@ -58,19 +76,25 @@ public static class MazeGenerator
         float width = Cols * CellSize;
         float depth = Rows * CellSize;
 
-        var floorMat = Resources.Load<Material>("Props/FloorMaterial");
-        WorldKit.Box("Floor", null,
+        var floorMat = MazeLook("MazeFloor", "FloorMaterial", "ROVR_MazeFloorTiled", GroundTexture, GroundTileSize, "MazeFloor");
+        var wallMat = MazeLook("MazeWall", "WallMaterial", "ROVR_MazeWallTiled", HedgeTexture, HedgeTileSize, "MazeWall");
+
+        var floor = WorldKit.Box("Floor", null,
             new Vector3(width / 2f, -0.05f, depth / 2f),
             new Vector3(width + 2f * Margin, 0.1f, depth + 2f * Margin), root, floorMat);
 
-        BuildWalls(root);
+        var walls = BuildWalls(root, wallMat);
         BuildMarkers(root, width, depth);
+
+        // Nothing in the maze ever moves, so let Unity batch the 65 wall pieces and the floor.
+        MarkStatic(floor.transform);
+        MarkStatic(walls);
 
         root.position = offset;
     }
 
     // Reads the ASCII plan and builds each straight run of wall as one piece.
-    static void BuildWalls(Transform root)
+    static Transform BuildWalls(Transform root, Material wallMat)
     {
         var walls = WorldKit.Group("Walls", root);
 
@@ -106,6 +130,83 @@ public static class MazeGenerator
                 }
             }
         }
+
+        if (wallMat != null)
+            foreach (var r in walls.GetComponentsInChildren<Renderer>())
+                r.sharedMaterial = wallMat;
+
+        return walls;
+    }
+
+    // ---- look: materials, texture import settings, static batching --------------------------
+
+    // Picks the wall / floor material (see the header for the order).
+    static Material MazeLook(string custom, string generic, string generatedName, string texturePath, float tileSize, string flatColour)
+    {
+        var m = Resources.Load<Material>("Props/" + custom);
+        if (m != null) return m;
+
+        m = Resources.Load<Material>("Props/" + generic);
+        if (m != null) return m;
+
+        m = TiledMaterial(generatedName, texturePath, tileSize);
+        return m != null ? m : WorldKit.Mat(flatColour);
+    }
+
+    // Creates (once) a material that uses the world-space shader with the given texture.
+    static Material TiledMaterial(string assetName, string texturePath, float tileSize)
+    {
+        string path = "Assets/Resources/Props/Generated/" + assetName + ".mat";
+        var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (existing != null) return existing;
+
+        var shader = Shader.Find("ROVR/WorldSpaceTiled");
+        var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+        if (shader == null || tex == null)
+        {
+            Debug.LogWarning("[ROVR Maze] Missing " + (shader == null ? "shader ROVR/WorldSpaceTiled" : "texture " + texturePath)
+                             + ", so the maze uses flat colours. Copy Assets/Shaders and Assets/Resources/Props/Maze into the project.");
+            return null;
+        }
+
+        PrepareTexture(texturePath);
+        tex = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+
+        EnsureFolder("Assets", "Resources");
+        EnsureFolder("Assets/Resources", "Props");
+        EnsureFolder("Assets/Resources/Props", "Generated");
+
+        var mat = new Material(shader);
+        mat.mainTexture = tex;
+        mat.SetFloat("_TileSize", tileSize);
+        AssetDatabase.CreateAsset(mat, path);
+        return mat;
+    }
+
+    static void EnsureFolder(string parent, string name)
+    {
+        if (!AssetDatabase.IsValidFolder(parent + "/" + name))
+            AssetDatabase.CreateFolder(parent, name);
+    }
+
+    // Tiling textures need Repeat wrapping, mipmaps (no shimmer at distance) and anisotropic
+    // filtering (so long corridors don't go blurry at a grazing angle).
+    static void PrepareTexture(string path)
+    {
+        var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+        if (importer == null) return;
+
+        bool changed = false;
+        if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; changed = true; }
+        if (!importer.mipmapEnabled) { importer.mipmapEnabled = true; changed = true; }
+        if (importer.anisoLevel < 8) { importer.anisoLevel = 8; changed = true; }
+        if (changed) importer.SaveAndReimport();
+    }
+
+    static void MarkStatic(Transform root)
+    {
+        foreach (var t in root.GetComponentsInChildren<Transform>())
+            GameObjectUtility.SetStaticEditorFlags(t.gameObject, StaticEditorFlags.BatchingStatic);
     }
 
     static void BuildMarkers(Transform root, float width, float depth)
