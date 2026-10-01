@@ -9,22 +9,32 @@ LLM-driven voice navigation in VR. A thesis prototype (De La Salle University) c
 
 ## Status
 
-Done: the three worlds (solid collision) and the language-to-movement pipeline, tested with a real model at about 0.6 s per command.
+Done:
+- The three worlds (solid collision), already generated and saved in `Assets/main.unity`. The maze is a hedge maze.
+- The language-to-movement pipeline in `Unity Navigation/`, tested with a real model at about 0.6 s per command.
+- Speech-to-text with [whisper.unity](https://github.com/Macoron/whisper.unity) (`Assets/STT/`), and a VR control panel (`Assets/GUI/`) with Plain / Maze / House teleport buttons, a mic mute button, subtitles and feedback text. Movement in the scene is by voice only; the panel understands `move forward`, `move backward`, `move left` and `move right`.
 
-Not done: voice input (a typed text box stands in), the joystick comparison arm, VR rig and scenes, task timing and logging, questionnaires. Note that Ollama can't take audio for this model, so voice will need a separate speech-to-text step.
+Not done: wiring the LLM pipeline from `Unity Navigation/` into `Assets/main.unity` (the scripts are not in the Unity project yet, so the panel uses its own fixed commands), the joystick comparison arm, task timing and logging, questionnaires. Ollama can't take audio for this model, so speech goes through Whisper first.
 
 ## Requirements
 
-- **Unity 6** (tested on 6000.4.10f1), 3D project
+- **Unity 6** (the project is on 6000.6.2f1), 3D project, built-in render pipeline (the maze shader is not URP/HDRP)
 - **[Ollama](https://ollama.com)** and the model `gemma3n:e4b` (about 7.5 GB). Tested on Windows 11 with an RTX 5070.
 
 ## Setup
 
 **1. Worlds**
 
-1. Create `Assets/Editor/` in your Unity project and copy the six `.cs` files from `Unity Environments/` into it.
-2. Open a scene and run **Tools > ROVR > Generate All Three Worlds**.
-3. Run **Tools > ROVR > Check Collisions**. It should report `All worlds solid.`
+If you cloned this repo, the worlds are already in `Assets/main.unity`: open it and press Play. Nothing generates on Play, because the generators only run from the **Tools > ROVR** menu.
+
+To set the worlds up in a different project:
+
+1. Create `Assets/Editor/` and copy the six `.cs` files from `Unity Environments/` into it.
+2. Copy the maze look: `Assets/Shaders/ROVRWorldSpaceTiled.shader` and the two textures in `Assets/Resources/Props/Maze/`. Without them the maze falls back to flat colours.
+3. Open a scene and run **Tools > ROVR > Generate All Three Worlds**. If the scene has a `VRControlPanel`, this also points its Plain / Maze / House teleport destinations at each world's new `Start`.
+4. Run **Tools > ROVR > Check Collisions**. It should report `All worlds solid.`
+
+Regenerating deletes and rebuilds each world, so anything you hand-placed inside `House`, `Plain` or `Maze` is lost. Save the scene afterwards.
 
 **2. Navigation**
 
