@@ -91,6 +91,7 @@ public static class MazeGenerator
         MarkStatic(walls);
 
         root.position = offset;
+        WorldKit.LinkTeleportDestination("mazeDestination", root);
     }
 
     // Reads the ASCII plan and builds each straight run of wall as one piece.

@@ -99,6 +99,7 @@ public static class HouseGenerator
         start.localPosition = new Vector3(12f, 0f, 1.5f); // just inside the entrance, facing north
 
         root.position = offset;
+        WorldKit.LinkTeleportDestination("houseDestination", root);
     }
 
     // WallMaterial / FloorMaterial in Resources/Props win if present; otherwise the house uses
