@@ -9,17 +9,21 @@ LLM-driven voice navigation in VR. A thesis prototype (De La Salle University) c
 
 ## Status
 
-Done:
-- The three worlds (solid collision), already generated and saved in `Assets/main.unity`. The maze is a hedge maze.
-- The language-to-movement pipeline in `Unity Navigation/`, tested with a real model at about 0.6 s per command.
-- Speech-to-text with [whisper.unity](https://github.com/Macoron/whisper.unity) (`Assets/STT/`), and a VR control panel (`Assets/GUI/`) with Plain / Maze / House teleport buttons, a mic mute button, subtitles and feedback text. Movement in the scene is by voice only; the panel understands `move forward`, `move backward`, `move left` and `move right`.
+There are two separate movement systems. They are **not connected yet**.
 
-Not done: wiring the LLM pipeline from `Unity Navigation/` into `Assets/main.unity` (the scripts are not in the Unity project yet, so the panel uses its own fixed commands), the joystick comparison arm, task timing and logging, questionnaires. Ollama can't take audio for this model, so speech goes through Whisper first.
+| | What it is | Where | In `Assets/main.unity`? |
+|---|---|---|---|
+| **Scene voice control** | Speech-to-text ([whisper.unity](https://github.com/Macoron/whisper.unity)) plus a VR control panel: Plain / Maze / House teleport buttons, mic mute, subtitles, feedback text. It understands only four fixed phrases: `move forward`, `move backward`, `move left`, `move right`. No LLM, no Ollama. | `Assets/STT/`, `Assets/GUI/` | **Yes** |
+| **LLM navigation pipeline** | Turns free-form commands ("go to the door") into movement through a local model, tested at about 0.6 s per command. Typed input only. | `Unity Navigation/` | **No.** The scripts are not in the Unity project |
+
+Done: the three worlds (solid collision), already generated and saved in `Assets/main.unity` with a hedge maze; the scene voice control; the LLM pipeline (standalone).
+
+Not done: connecting the LLM pipeline to the scene's voice input, the joystick comparison arm, task timing and logging, questionnaires. Ollama can't take audio for this model, so speech has to go through Whisper first.
 
 ## Requirements
 
 - **Unity 6** (the project is on 6000.6.2f1), 3D project, built-in render pipeline (the maze shader is not URP/HDRP)
-- **[Ollama](https://ollama.com)** and the model `gemma3n:e4b` (about 7.5 GB). Tested on Windows 11 with an RTX 5070.
+- **[Ollama](https://ollama.com)** and the model `gemma3n:e4b` (about 7.5 GB), **only for the LLM navigation pipeline** (section 2). The scene voice control does not need it. Tested on Windows 11 with an RTX 5070.
 
 ## Setup
 
@@ -36,7 +40,9 @@ To set the worlds up in a different project:
 
 Regenerating deletes and rebuilds each world, so anything you hand-placed inside `House`, `Plain` or `Maze` is lost. Save the scene afterwards.
 
-**2. Navigation**
+**2. LLM navigation (optional, not part of `main.unity`)**
+
+This sets up the pipeline in `Unity Navigation/` on its own player. The commands below are typed into its on-screen box. They do not work with the voice panel in `main.unity`, which only understands `move forward/backward/left/right`.
 
 1. Pull the model:
    ```bash
@@ -46,7 +52,7 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 3. Make a player: a GameObject with a `CharacterController` and a child camera. Add `FOVMetadataGrounding`, `NavigationController`, `OllamaClient`, `SemanticIntentResolver` and `ROVRDebugConsole` to it, and set each `pov` field to the camera.
 4. Put the player on a world's `Start` object, enter Play mode, type a command in the on-screen box and press Send.
 
-**Sample commands**
+**Sample commands (LLM navigation only)**
 
 | Type this | What should happen |
 |---|---|
