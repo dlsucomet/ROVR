@@ -28,6 +28,12 @@
 // The prop root carries the tag and ONE solid BoxCollider, so raycasts (FOV grounding, stop-at
 // conditions) hit a correctly tagged object, and CollisionCheck sees every mesh as covered.
 //
+// DECOR: potted plants, a cactus and a few small stone statues come from the Kenney Nature Kit
+// (CC0), in Assets/Resources/Props/Nature. They are sized by target height in metres. A statue,
+// cactus or plant that stands on furniture is placed on that prop's measured top. A missing model
+// is skipped with a warning. Baseboards (the "Trim" boxes) run along every wall. All of it is
+// tagged Furniture / Wall, so the LLM sees nothing new.
+//
 // Needs WorldKit.cs alongside it. Optional: drop WallMaterial.mat / FloorMaterial.mat into
 // Assets/Resources/Props to override the built-in house colours.
 //
@@ -113,10 +119,10 @@ public static class HouseGenerator
 
     static void BuildFloorAndRoof(Transform root)
     {
-        var floorMat = HouseMaterial("FloorMaterial", "HouseFloor");
+        var floorMat = HouseMaterial("FloorMaterial", "HouseFloorOak");
         WorldKit.Box("Floor", null, new Vector3(12f, -0.05f, 10f), new Vector3(24f, 0.1f, 20f), root, floorMat);
 
-        var wallMat = HouseMaterial("WallMaterial", "HouseWall");
+        var wallMat = HouseMaterial("WallMaterial", "HouseWallCream");
         WorldKit.Box("Roof", null, new Vector3(12f, H + RoofThickness / 2f, 10f), new Vector3(24.4f, RoofThickness, 20.4f), root, wallMat);
     }
 
@@ -150,10 +156,33 @@ public static class HouseGenerator
         // powder room east wall
         WorldKit.Wall(walls, doors, 19f, 15f, 19f, 20f, 0f, H);
 
-        var wallMat = HouseMaterial("WallMaterial", "HouseWall");
+        var wallMat = HouseMaterial("WallMaterial", "HouseWallCream");
         if (wallMat != null)
             foreach (var r in walls.GetComponentsInChildren<Renderer>())
                 r.sharedMaterial = wallMat;
+
+        BuildTrim(root, walls);
+    }
+
+    // A dark baseboard along the foot of every wall piece (not the lintels over doorways). It is a
+    // solid box 2 cm proud of the wall on both faces, tagged Wall so it reads as part of the wall.
+    static void BuildTrim(Transform root, Transform walls)
+    {
+        var trim = WorldKit.Group("Trim", root);
+        var mat = WorldKit.Mat("Trim");
+        const float height = 0.12f, proud = 0.02f;
+
+        foreach (var r in walls.GetComponentsInChildren<Renderer>())
+        {
+            Bounds b = r.bounds;
+            if (b.min.y > 0.05f) continue; // lintel above a doorway
+
+            bool alongX = b.size.x > b.size.z;
+            Vector3 size = alongX
+                ? new Vector3(b.size.x, height, b.size.z + 2f * proud)
+                : new Vector3(b.size.x + 2f * proud, height, b.size.z);
+            WorldKit.Box("Baseboard", "Wall", new Vector3(b.center.x, height / 2f, b.center.z), size, trim, mat);
+        }
     }
 
     static readonly Prop[] Props =
@@ -211,7 +240,107 @@ public static class HouseGenerator
         new Prop("Ensuite Toilet", F, "toilet", 0.5f, 19.2f, 0.75f, 0.45f, 0.45f, "White", yaw: 90f, back: true, scale: 0.85f),
         new Prop("Ensuite Vanity", F, "bathroomSink", 2.5f, 19.55f, 1f, 0.9f, 0.5f, "White", yaw: 180f, back: true, scale: 0.8f),
         new Prop("Ensuite Shower", F, "showerRound", 0.62f, 15.62f, 1f, 2f, 1f, "Steel", yaw: 180f, scale: 0.85f),
+
+        // extra furniture (all tagged Furniture, so the chair count the LLM sees does not change)
+        new Prop("Side Table 2", F, "cabinetBed", 2f, 9.5f, 0.5f, 0.6f, 0.5f, "Wood", yaw: 180f, back: true),
+        new Prop("Living Armchair 2", F, "loungeChair", 6.8f, 2.8f, 0.9f, 0.85f, 0.9f, "Fabric", yaw: 180f),
+        new Prop("Bedroom Lamp", F, "lampRoundFloor", 8.5f, 19.4f, 0.35f, 1.6f, 0.35f, "Steel", yaw: 0f),
+        new Prop("Hall Stool 1", F, "stoolBar", 9.55f, 7.6f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f),
+        new Prop("Hall Stool 2", F, "stoolBar", 9.55f, 8.3f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f),
     };
+
+    // ---- Nature Kit decor ----------------------------------------------------------------------
+    // (model, height in metres), stacked bottom to top. surface = the name of a prop above, to
+    // stand on its top (x, z are then taken from it); otherwise the item stands on the floor at x, z.
+    struct Decor
+    {
+        public string name, surface;
+        public float x, z;
+        public (string model, float height)[] layers;
+
+        public Decor(string name, string surface, float x, float z, params (string model, float height)[] layers)
+        {
+            this.name = name; this.surface = surface; this.x = x; this.z = z; this.layers = layers;
+        }
+    }
+
+    const string DecorFolder = "Props/Nature/";
+    static readonly (string model, float height)[] BigPlant = { ("pot_large", 0.45f), ("plant_bushDetailed", 0.9f) };
+    static readonly (string model, float height)[] TallPlant = { ("pot_large", 0.45f), ("plant_bush", 1.3f) };
+
+    static readonly Decor[] DecorItems =
+    {
+        // hall
+        new Decor("Hall Plant 1", null, 14.4f, 10f, TallPlant),
+        new Decor("Hall Plant 2", null, 14.4f, 13f, BigPlant),
+        new Decor("Hall Plant 3", null, 9.6f, 10.6f, BigPlant),
+        new Decor("Hall Plant 4", null, 12f, 19.3f, TallPlant),
+        new Decor("Console Statue", "Console Table", 0f, 0f, ("statue_head", 0.35f)),
+
+        // living room
+        new Decor("Living Plant 1", null, 8.4f, 1f, TallPlant),
+        new Decor("Living Plant 2", null, 0.7f, 6.4f, BigPlant),
+        new Decor("Living Cactus", "Side Table", 0f, 0f, ("pot_small", 0.12f), ("cactus_short", 0.3f)),
+
+        // bedroom
+        new Decor("Bedroom Plant 1", null, 0.7f, 14.3f, BigPlant),
+        new Decor("Bedroom Plant 2", null, 8.4f, 11f, TallPlant),
+        new Decor("Nightstand Plant", "Nightstand Left", 0f, 0f, ("pot_small", 0.12f), ("plant_bushSmall", 0.25f)),
+
+        // kitchen and dining
+        new Decor("Dining Plant 1", null, 19.7f, 15.8f, BigPlant),
+        new Decor("Dining Plant 2", null, 21.5f, 19.3f, TallPlant),
+        new Decor("Cabinet Statue", "China Cabinet", 0f, 0f, ("statue_column", 0.5f)),
+    };
+
+    // Places one stack of Nature Kit models and gives the stack one solid box.
+    static void BuildDecor(Transform props)
+    {
+        var group = WorldKit.Group("Decor", props.parent);
+        var skipped = new List<string>();
+
+        foreach (var d in DecorItems)
+        {
+            float x = d.x, z = d.z, y = 0f;
+            if (d.surface != null)
+            {
+                var surface = props.Find(d.surface);
+                if (surface == null) { skipped.Add(d.name + " (no prop called " + d.surface + ")"); continue; }
+                Bounds sb = RenderBounds(surface.gameObject);
+                x = sb.center.x; z = sb.center.z; y = sb.max.y;
+            }
+
+            var holder = new GameObject(d.name);
+            holder.transform.SetParent(group, false);
+            bool any = false;
+
+            foreach (var layer in d.layers)
+            {
+                var prefab = Resources.Load<GameObject>(DecorFolder + layer.model);
+                if (prefab == null) { skipped.Add(d.name + " (" + layer.model + ")"); continue; }
+
+                var m = Spawn(prefab, holder.transform, 1f);
+                float native = RenderBounds(m).size.y;
+                if (native > 0.0001f) m.transform.localScale = Vector3.one * (layer.height / native);
+
+                Bounds b = RenderBounds(m);
+                m.transform.localPosition += new Vector3(x - b.center.x, y - b.min.y, z - b.center.z);
+                y = RenderBounds(m).max.y;
+                any = true;
+            }
+
+            if (!any) { Object.DestroyImmediate(holder); continue; }
+
+            Bounds all = RenderBounds(holder);
+            var box = holder.AddComponent<BoxCollider>();
+            box.center = all.center;
+            box.size = all.size;
+            TagAll(holder, F);
+        }
+
+        if (skipped.Count > 0)
+            Debug.LogWarning("[ROVR House] Skipped decor (copy Assets/Resources/Props/Nature into the project): " + string.Join(", ", skipped.ToArray()));
+    }
 
     static void BuildProps(Transform root)
     {
@@ -233,6 +362,8 @@ public static class HouseGenerator
 
             obj.name = p.name;
         }
+
+        BuildDecor(group);
 
         if (fallbacks.Count > 0)
             Debug.LogWarning("[ROVR House] " + fallbacks.Count + " prop(s) used blockout boxes because no model was found in "
