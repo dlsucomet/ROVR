@@ -18,7 +18,8 @@ For the whole-project setup, see the [repository README](../README.md).
    | `WorldBuilder.cs` | Builds all three into one scene |
    | `CollisionCheck.cs` | Verifies the worlds are solid |
 
-3. Wait for Unity to compile. A **Tools > ROVR** menu appears.
+3. For the hedge maze, also copy `Assets/Shaders/ROVRWorldSpaceTiled.shader` and the two textures in `Assets/Resources/Props/Maze/`. Without them the maze uses flat colours (a warning appears in the Console).
+4. Wait for Unity to compile. A **Tools > ROVR** menu appears.
 
 ## Menu
 
@@ -28,9 +29,15 @@ For the whole-project setup, see the [repository README](../README.md).
 | Generate House / Plain / Maze | One world at the origin |
 | Check Collisions | Tests that nothing can be walked through (see below) |
 
-Re-running a generator **replaces** that world's existing object (`House`, `Plain` or `Maze`) rather than adding a second copy, and Ctrl+Z undoes it. Save the scene afterwards.
+Re-running a generator **replaces** that world's existing object (`House`, `Plain` or `Maze`) rather than adding a second copy, and Ctrl+Z undoes it. Anything you placed by hand inside that object is deleted with it. Save the scene afterwards.
+
+**Generate Maze / Plain / House on their own build at the origin.** In `Assets/main.unity` the worlds sit at the offsets above, so use **Generate All Three Worlds**, or move the world back to its offset afterwards.
+
+Nothing generates when you press Play. The saved scene is a snapshot, so after changing a generator you must regenerate and save before the change appears.
 
 Every world has an empty `Start` object; place the player there.
+
+**Teleport buttons.** Each generator ends by finding the scene's `VRControlPanel` (if there is one) and setting its `plainDestination`, `mazeDestination` or `houseDestination` to the new world's `Start`. This is needed because regenerating deletes the old world and would otherwise empty the reference. The panel takes its position from `Start` and sets the facing itself (Plain 0°, Maze 90°, House 0°).
 
 ## The worlds
 
