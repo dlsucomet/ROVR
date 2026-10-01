@@ -38,6 +38,11 @@ public static class WorldKit
         { "HouseFloor", new Color(0.90f, 0.76f, 0.58f) },   // House only: warm peach floor (matches the Kenney kit)
         { "MazeWall",  new Color(0.23f, 0.46f, 0.18f) },   // Maze flat fallback (used only if the tiled shader/textures are missing)
         { "MazeFloor", new Color(0.82f, 0.76f, 0.62f) },
+        { "Water", new Color(0.22f, 0.50f, 0.72f) },       // Plain ponds
+        { "PlainGrass", new Color(0.36f, 0.58f, 0.25f) },  // Plain ground (used unless FloorMaterial.mat exists)
+        { "HouseWallCream", new Color(0.96f, 0.91f, 0.82f) },  // House walls and ceiling: warm cream
+        { "HouseFloorOak", new Color(0.66f, 0.48f, 0.32f) },   // House floor: warm oak
+        { "Trim", new Color(0.36f, 0.26f, 0.19f) },            // House baseboards
     };
 
     public static void EnsureTags(params string[] tags)
