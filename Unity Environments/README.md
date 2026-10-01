@@ -84,12 +84,15 @@ Collision only holds if the player moves through `CharacterController.Move`. Set
 
 ## Customising the look
 
-The Maze and the Plain are grey blockouts with flat colours. Materials are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene.
+The Plain is a grey blockout with flat colours; flat-colour materials are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene.
+
+**The Maze is a hedge maze on a pale gravel floor.** Walls and floor use the `ROVR/WorldSpaceTiled` shader (`Assets/Shaders/`), which tiles a texture by real-world position. That keeps the texture the same size on every wall and stops it stretching along the long wall pieces. The two seamless textures (`MazeHedge.png`, `MazeGround.png`) are in `Assets/Resources/Props/Maze/`. To change how large the texture looks, edit "Metres per texture repeat" on `ROVR_MazeWallTiled` / `ROVR_MazeFloorTiled` in `Generated/`. The maze deliberately has no decoration or landmarks, so keep any replacement look uniform.
 
 **The House uses the [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit)** (CC0, credit optional). Its 28 models are in `Assets/Resources/Props/` and `HouseGenerator.cs` places them, so the furnishings, walls, ceiling and floor share one low-poly, flat-colour style. The house is about 21,000 triangles of furniture in total.
 
 | Put this in `Assets/Resources/Props/` | To replace |
 |---|---|
+| `MazeWall.mat` / `MazeFloor.mat` | The Maze's walls / floor only (checked first) |
 | `WallMaterial.mat` | Every wall. Also overrides the House's built-in off-white walls and ceiling |
 | `FloorMaterial.mat` | Every floor. Also overrides the House's built-in peach floor |
 | `<name>.fbx` / `<name>.prefab` | The furnishing that uses that model name in `HouseGenerator.cs` |

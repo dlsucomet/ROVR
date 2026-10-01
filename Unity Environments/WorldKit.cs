@@ -36,6 +36,8 @@ public static class WorldKit
         { "Start",  new Color(0.20f, 0.40f, 0.90f) },
         { "HouseWall",  new Color(0.95f, 0.94f, 0.90f) },   // House only: soft off-white walls and ceiling
         { "HouseFloor", new Color(0.90f, 0.76f, 0.58f) },   // House only: warm peach floor (matches the Kenney kit)
+        { "MazeWall",  new Color(0.23f, 0.46f, 0.18f) },   // Maze flat fallback (used only if the tiled shader/textures are missing)
+        { "MazeFloor", new Color(0.82f, 0.76f, 0.62f) },
     };
 
     public static void EnsureTags(params string[] tags)
