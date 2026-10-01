@@ -37,6 +37,7 @@ public static class PlainGenerator
         BuildTree(root, new Vector3(Width / 2f, 0f, Depth / 2f + TreeDistance));
 
         root.position = offset;
+        WorldKit.LinkTeleportDestination("plainDestination", root);
     }
 
     static void BuildTree(Transform root, Vector3 position)

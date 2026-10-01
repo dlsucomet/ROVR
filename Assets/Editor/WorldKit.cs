@@ -75,6 +75,29 @@ public static class WorldKit
         return go.transform;
     }
 
+    // Points the scene's VRControlPanel teleport button for this world at the world's fresh "Start".
+    // NewRoot() deletes the old world, which empties whatever the panel pointed at inside it, so
+    // every generator calls this last. `field` is the panel's field, e.g. "mazeDestination".
+    // Matched by name so these scripts still work in a project that has no VR panel.
+    public static void LinkTeleportDestination(string field, Transform root)
+    {
+        var start = root.Find("Start");
+        if (start == null) return;
+
+        foreach (var mb in Object.FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (mb == null || mb.GetType().Name != "VRControlPanel") continue;
+            var so = new SerializedObject(mb);
+            var prop = so.FindProperty(field);
+            if (prop == null) continue;
+
+            Undo.RecordObject(mb, "Link " + field);
+            prop.objectReferenceValue = start;
+            so.ApplyModifiedProperties();
+            EditorSceneManager.MarkSceneDirty(mb.gameObject.scene);
+        }
+    }
+
     public static Transform Group(string name, Transform parent)
     {
         var g = new GameObject(name).transform;
