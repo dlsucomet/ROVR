@@ -19,6 +19,7 @@ For the whole-project setup, see the [repository README](../README.md).
    | `CollisionCheck.cs` | Verifies the worlds are solid |
 
 3. For the hedge maze, also copy `Assets/Shaders/ROVRWorldSpaceTiled.shader` and the two textures in `Assets/Resources/Props/Maze/`. Without them the maze uses flat colours (a warning appears in the Console).
+   For the Plain scenery and the House plants and statues, copy `Assets/Resources/Props/Nature/` (Kenney Nature Kit models and license). Without it the Plain falls back to the old primitive tree and the House skips its decor, each with a warning in the Console.
 4. Wait for Unity to compile. A **Tools > ROVR** menu appears.
 
 ## Menu
@@ -47,7 +48,9 @@ Floor plans are in [`rovr-house-floorplan.svg`](rovr-house-floorplan.svg), [`rov
 - A 6 m-wide hall runs down the middle from the entrance (south wall).
 - West side: **living room** and a **bedroom** with an **ensuite bathroom**.
 - East side: **kitchen** with a **dining area**, and a **powder room**.
-- 42 furnishings define the rooms: sofa, coffee table and TV in the living room; stove, fridge, sink, island with stools and a six-chair dining table in the kitchen; bed, desk and wardrobe in the bedroom; toilets, vanities and a shower.
+- 47 furnishings define the rooms: sofa, two armchairs, coffee table and TV in the living room; stove, fridge, sink, island with stools and a six-chair dining table in the kitchen; bed, desk and wardrobe in the bedroom; toilets, vanities and a shower; two stools in the hall.
+- **Decor** from the Nature Kit: 10 potted plants (4 in the hall, 2 in the living room, 2 in the bedroom, 2 in the dining area), a small plant on a nightstand, a cactus on the living-room side table, and two stone statues (a head on the hall console table, a column on the China cabinet). Items on furniture sit on that prop's measured top.
+- **Warm look:** cream walls and ceiling, an oak floor, and dark baseboards along every wall (not over doorways).
 - Doorways are 2 m wide with a lintel above. Each has a `Door` marker that doesn't block movement.
 - Point lights in every room, and a `Roof` object. **Disable `Roof` to look down into the rooms** in the Scene view.
 - `Start` is just inside the entrance, facing north.
@@ -62,8 +65,11 @@ A two-storey version (stairs and an upstairs master suite) is in git commit `f54
 - **To edit the layout:** the maze is the ASCII plan in `MazeGenerator.cs` (`Layout`). `+---+` are horizontal walls, `|` vertical walls, and a gap in the outer wall is an opening. Regenerate after editing. The SVG plan isn't regenerated automatically, so update it by hand if you change the layout.
 
 ### Plain: 100 × 100 m
-- A flat, barrier-free field with one **tree** as the only point of reference, 18 m directly ahead of `Start`.
+- A flat, barrier-free grass-green field with one **tree** as the only tagged point of reference, 18 m directly ahead of `Start`. It is a Nature Kit tree, 8 m tall.
 - The tree is tagged `Tree`, so the LLM can name it. To make it a purely visual landmark, set `TreeTag = null` in `PlainGenerator.cs`.
+- **Scenery** fills the field so it doesn't read as an empty slab: 18 rocks, 79 grass tufts, 40 flowers, 6 background trees and 2 ponds. It is scattered with a fixed random seed (`ScenerySeed`), so every participant gets the identical field. The ground within 6 m of `Start`, the strip from `Start` to the tree and the area round the tree are kept clear, and the background trees stand at least 35 m from `Start`, so the tagged tree stays the obvious landmark.
+- **Ponds:** two (5 m and 4 m radius): a solid disc of water ringed with stones and lily pads. They are obstacles to walk round, not water to wade through.
+- The scenery is untagged and solid. The LLM can't see it, but it still blocks movement and view. To change the amounts, edit the `Scenery` table in `PlainGenerator.cs`; set a count to 0 to remove that kind, or edit `Ponds` for the ponds.
 - There's no boundary at the edge of the floor. Walking off it leaves the avatar floating over nothing, which matches "no barriers" in the thesis.
 
 ## Tags
@@ -91,7 +97,9 @@ Collision only holds if the player moves through `CharacterController.Move`. Set
 
 ## Customising the look
 
-The Plain is a grey blockout with flat colours; flat-colour materials are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene.
+Flat-colour materials (the Plain's grass and water, the House's cream, oak and trim) are created once, as assets, in `Assets/Resources/Props/Generated/` so they survive saving the scene. Changing a colour in `WorldKit.cs` does not update an existing asset: delete the asset, or use a new palette key.
+
+**The Plain and the House decor use the [Kenney Nature Kit](https://kenney.nl/assets/nature-kit)** (CC0, credit optional). The models are in `Assets/Resources/Props/Nature/`, with the license. Models are sized by target height in metres, not by FBX scale. A missing model is skipped with a warning.
 
 **The Maze is a hedge maze on a pale gravel floor.** Walls and floor use the `ROVR/WorldSpaceTiled` shader (`Assets/Shaders/`), which tiles a texture by real-world position. That keeps the texture the same size on every wall and stops it stretching along the long wall pieces. The two seamless textures (`MazeHedge.png`, `MazeGround.png`) are in `Assets/Resources/Props/Maze/`. To change how large the texture looks, edit "Metres per texture repeat" on `ROVR_MazeWallTiled` / `ROVR_MazeFloorTiled` in `Generated/`. The maze deliberately has no decoration or landmarks, so keep any replacement look uniform.
 
