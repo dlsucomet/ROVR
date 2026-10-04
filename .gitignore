@@ -57,3 +57,6 @@ crashlytics-build.properties
 
 # macOS
 .DS_Store
+
+# Local speech-to-text tools and models (600 MB); not part of the project
+/Voice Server/

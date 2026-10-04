@@ -28549,7 +28549,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1341780037}
   - component: {fileID: 1341780036}
-  - component: {fileID: 1341780038}
   m_Layer: 0
   m_Name: PlayerBody
   m_TagString: Untagged
@@ -28581,7 +28580,7 @@ CharacterController:
   m_StepOffset: 0.3
   m_SkinWidth: 0.08
   m_MinMoveDistance: 0.001
-  m_Center: {x: 0, y: 1, z: 0}
+  m_Center: {x: 0, y: 1.08, z: 0}
 --- !u!4 &1341780037
 Transform:
   m_ObjectHideFlags: 0
@@ -28599,24 +28598,6 @@ Transform:
   - {fileID: 137635655}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1341780038
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1341780035}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b6c0653a23c0a544882ef3078a81dbe7, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::WhisperVoiceMovement
-  whisperManager: {fileID: 1493142075}
-  microphoneRecord: {fileID: 471277074}
-  bodyTransform: {fileID: 0}
-  vrCameraTransform: {fileID: 0}
-  moveSpeed: 2
-  moveDuration: 1
 --- !u!1 &1341828760
 GameObject:
   m_ObjectHideFlags: 0
