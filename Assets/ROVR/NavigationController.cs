@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/NavigationController.cs
+// Assets/ROVR/NavigationController.cs
 // The deterministic, engine-native half of the Semantic-Geometric Division of Labor (Section
 // 6.2.3): the LLM never touches trajectory math, it only hands off a NavigationCommand. This
 // controller is what actually moves the CharacterController, and it's the layer responsible for

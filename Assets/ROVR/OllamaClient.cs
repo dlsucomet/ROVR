@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/OllamaClient.cs
+// Assets/ROVR/OllamaClient.cs
 // Talks to a locally-hosted Ollama server (Section 6.3.1: "the ROVR architecture completely
 // rejects cloud-based API dependencies in favor of a localized Large Language Model"). Pull the
 // model once with `ollama pull gemma3n:e4b`, run `ollama serve`, and this hits it over loopback.

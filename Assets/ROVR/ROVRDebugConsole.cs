@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/ROVRDebugConsole.cs
+// Assets/ROVR/ROVRDebugConsole.cs
 // Text-input stand-in for the voice channel. Lets the whole intent -> command -> movement
 // pipeline be exercised and debugged in Play mode before real microphone capture and speech
 // recognition are wired up. Not meant to ship in the study build -- swap this component out for

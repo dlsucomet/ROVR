@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/SemanticIntentResolver.cs
+// Assets/ROVR/SemanticIntentResolver.cs
 // Top-level orchestrator for the pipeline in Section 6.2.1:
 //   utterance -> Interrupt Module -> POV metadata scan -> LLM -> engine checks -> execute or clarify.
 //
@@ -118,6 +118,14 @@ Command: go to the tree (no Tree in the visible objects list)
             lastCommand = null;
             lastOutcome = null;
             pendingClarification = null;
+        }
+
+        // Stops movement now and cancels any request still waiting on the LLM, so a late reply can't
+        // restart it. For voice input's early "stop" check, which fires before the sentence is finished.
+        public void HaltNow()
+        {
+            requestId++;
+            controller.Halt();
         }
 
         public void SubmitUtterance(string utterance)

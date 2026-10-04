@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/MovementHabits.cs
+// Assets/ROVR/MovementHabits.cs
 // How far "a bit" is. It starts at 0.5 m and adapts to the person: the LLM only labels a move as
 // "small", and the engine turns that into metres from this value (the model never does geometry).
 //

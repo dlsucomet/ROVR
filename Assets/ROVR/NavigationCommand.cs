@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/NavigationCommand.cs
+// Assets/ROVR/NavigationCommand.cs
 // The four-vector kinematic schema the LLM is constrained to (Section 6.3.4): every parsed
 // utterance becomes a sequence of { action, direction, amount/magnitude, condition } steps, or a
 // clarification request when the command can't be grounded (6.2.5).

@@ -1,4 +1,4 @@
-// Assets/Scripts/ROVR/FOVMetadataGrounding.cs
+// Assets/ROVR/FOVMetadataGrounding.cs
 // The Physics-based Raycast Matrix from Section 6.3.2: casts a grid of rays (horizontal x
 // vertical) through the user's field of view to build the POV-scoped metadata index. Only objects
 // this scan reaches are ever visible to the LLM (Closed-World Assumption, Section 3.3.2 / 6.2.4).
