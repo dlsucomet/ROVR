@@ -1,6 +1,6 @@
 # ROVR
 
-LLM-driven voice navigation in VR. A thesis prototype (De La Salle University) comparing joystick movement against spoken commands, interpreted by a local LLM, in three environments: a **plain**, a **maze** and a **house**.
+LLM-driven voice navigation in VR. A thesis prototype comparing joystick movement against spoken commands, interpreted by a local LLM, in three environments: a **plain**, a **maze** and a **house**.
 
 | Folder | What it is |
 |---|---|
