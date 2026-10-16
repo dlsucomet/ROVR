@@ -22,6 +22,10 @@ namespace ROVR
 
     public enum CommandOutcome { Completed, Halted, Blocked, NotFound }
 
+    // What ends a step that has a target: getting to it (the default), or just seeing it
+    // ("move forward and turn left when you see the door").
+    public enum UntilType { Reach, See }
+
     [Serializable]
     public class RawNavigationStep
     {
@@ -30,6 +34,7 @@ namespace ROVR
         public string amount;
         public float magnitude;
         public string condition;
+        public string until;
     }
 
     [Serializable]
@@ -48,6 +53,7 @@ namespace ROVR
         public AmountType amount;
         public float magnitude;   // meters for Move, degrees for Turn; 0 = not specified
         public string condition;  // object to move to / turn until seen: a name ("tree") or one object's id ("tree-3"); empty = none
+        public UntilType until;   // with a condition: stop on reaching it, or as soon as it's in view
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;
@@ -69,9 +75,10 @@ namespace ROVR
           ""direction"": { ""type"": ""string"", ""enum"": [""forward"", ""back"", ""left"", ""right"", ""up"", ""down"", ""none""] },
           ""amount"": { ""type"": ""string"", ""enum"": [""none"", ""exact"", ""small""] },
           ""magnitude"": { ""type"": ""number"" },
-          ""condition"": { ""type"": ""string"" }
+          ""condition"": { ""type"": ""string"" },
+          ""until"": { ""type"": ""string"", ""enum"": [""reach"", ""see""] }
         },
-        ""required"": [""action"", ""direction"", ""amount"", ""magnitude"", ""condition""]
+        ""required"": [""action"", ""direction"", ""amount"", ""magnitude"", ""condition"", ""until""]
       }
     },
     ""clarification"": { ""type"": ""string"" },
@@ -85,6 +92,7 @@ namespace ROVR
     public class NavigationCommand
     {
         public const string DidntCatch = "I didn't catch a movement command in that.";
+        public const int MaxSteps = 10; // a longer chain is cut here
 
         public NavigationStep[] steps = Array.Empty<NavigationStep>();
         public string clarificationPrompt;
@@ -145,8 +153,10 @@ namespace ROVR
                         direction = direction,
                         amount = amount,
                         magnitude = magnitude,
-                        condition = condition
+                        condition = condition,
+                        until = ParseEnum(r.until, UntilType.Reach)
                     });
+                    if (steps.Count == MaxSteps) break;
                 }
             }
 
@@ -166,7 +176,8 @@ namespace ROVR
                   .Append("\"direction\":\"").Append(s.direction.ToString().ToLowerInvariant()).Append("\",")
                   .Append("\"amount\":\"").Append(s.amount.ToString().ToLowerInvariant()).Append("\",")
                   .Append("\"magnitude\":").Append(s.magnitude.ToString("0.##", CultureInfo.InvariantCulture)).Append(',')
-                  .Append("\"condition\":\"").Append(s.condition ?? string.Empty).Append("\"}");
+                  .Append("\"condition\":\"").Append(s.condition ?? string.Empty).Append("\",")
+                  .Append("\"until\":\"").Append(s.until.ToString().ToLowerInvariant()).Append("\"}");
             }
             return sb.Append("]}").ToString();
         }

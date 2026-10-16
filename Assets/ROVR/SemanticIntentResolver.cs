@@ -79,8 +79,11 @@ STEPS. Each step has:
 - direction: forward | back | left | right | up | down | none
 - amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
 - condition: the object to move toward or stop at, in the user's own word, singular (tree, door, couch); when there is no target it is an empty string """" (never the word none)
+- until: reach = the step ends on getting to the object (the default); see = it ends as soon as the object comes into view ('when you see the door')
 
-TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition Tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
+SEVERAL STEPS. A command can have several steps, done in order. 'Move forward 10 meters, then turn right' = a move step, then a turn step. 'Face right when you reach the tree' = move to the tree, then turn right: put the steps in the order they happen, not the order they are said. 'Move forward and turn left when you see the door' = move forward with condition door and until see, then turn left. 'Turn right three times' = three turn steps; 'move forward 2 meters twice' = two move steps of 2 meters.
+
+TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
 
 NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
 
@@ -94,35 +97,47 @@ If you cannot tell what the user wants, return no steps and put a short question
 
 EXAMPLES
 Command: move forward 5 meters
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go forward until you reach the door (a door is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: back up a bit
-{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (previous command was a small move forward)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: left
-{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: move right half a meter
-{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (Previous command: none)
 {""steps"":[],""clarification"":""More of what? Tell me which way to move."",""which"":"""",""which_near"":""""}
 Command: turn around until you see a chair
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: turn around until you see the tree (no tree in the visible objects list)
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the couch (a sofa is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the left plant (two plants are listed)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""plant""}],""clarification"":"""",""which"":""left"",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""plant"",""until"":""reach""}],""clarification"":"""",""which"":""left"",""which_near"":""""}
 Command: go to that tree
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":"""",""which"":""looking"",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""}],""clarification"":"""",""which"":""looking"",""which_near"":""""}
 Command: the one next to the pond (Question you asked: Which tree?)
 {""steps"":[],""clarification"":"""",""which"":"""",""which_near"":""pond""}
 Command: the closer one (Question you asked: Which chair?)
 {""steps"":[],""clarification"":"""",""which"":""nearest"",""which_near"":""""}
+Command: move forward 10 meters, then turn right
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":10,""condition"":"""",""until"":""reach""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: face to the right when you reach the tree (a tree is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: turn left when you get to the tree (a tree is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: move back 3 meters then left 2 meters
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""exact"",""magnitude"":3,""condition"":"""",""until"":""reach""},{""action"":""move"",""direction"":""left"",""amount"":""exact"",""magnitude"":2,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: keep going forward and turn left when you see a door
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""see""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: turn left twice
+{""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the lamp (no lamp in the visible objects list)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
 
         void Awake()
         {
@@ -321,12 +336,14 @@ Command: go to the lamp (no lamp in the visible objects list)
         string FindGroundingProblem(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
             AttachMissingTarget(command, utterance);
+            ApplyRepeatsAndTurnAround(command, utterance);
 
-            var introducedByTurn = new HashSet<string>();
+            bool viewChanged = false; // after a move or a turn, what's in view is different: later targets are found when their step starts
 
             foreach (var step in command.steps)
             {
-                if (!step.HasCondition) continue;
+                bool changesView = step.action == ActionType.Move || step.action == ActionType.Turn;
+                if (!step.HasCondition) { viewChanged |= changesView; continue; }
 
                 string target = ResolveTarget(step.condition, utterance, visible);
                 if (target == null)
@@ -334,22 +351,30 @@ Command: go to the lamp (no lamp in the visible objects list)
                 step.condition = target;
                 string name = grounding.NameFor(target);
 
+                if (viewChanged) continue; // NavigationController finds it when the step starts
+                viewChanged |= changesView;
+
+                if (step.action == ActionType.Move && step.until == UntilType.See)
+                {
+                    // "Turn left when you see the door" with the door already in view means at the door.
+                    if (visible.Exists(o => grounding.Matches(o, target))) step.until = UntilType.Reach;
+                    else continue;
+                }
+
                 if (step.action == ActionType.Turn)
                 {
-                    introducedByTurn.Add(target); // turning until X is in view is how X gets found (6.4.2)
-
+                    // Turning until X is in view is how X gets found (6.4.2), so X needn't be in view now.
                     // Turning until you see something you can already see would silently do nothing.
                     if (command.steps.Length == 1 && visible.Exists(o => grounding.Matches(o, target)))
                         return "The " + name + " is already in view. Where do you want to go?";
                     continue;
                 }
 
-                bool inView = visible.Exists(o => grounding.Matches(o, target));
-                if (!inView && !introducedByTurn.Contains(target))
+                if (!visible.Exists(o => grounding.Matches(o, target)))
                     return "I don't see " + Article(name) + " right now. Where is it relative to what you can see?";
 
                 bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
-                if (inView && horizontal && !introducedByTurn.Contains(target) && !grounding.IsCollapsedName(name))
+                if (horizontal && !grounding.IsCollapsedName(name))
                 {
                     string aim = CheckAim(step, command, visible);
                     if (aim != null) return aim;
@@ -359,10 +384,12 @@ Command: go to the lamp (no lamp in the visible objects list)
         }
 
         // "Go to the tree" must never become an endless walk because the model left out the target: a
-        // move with no distance (or a "turn until you see") that has no target, when the user named
-        // exactly one object, gets that object.
+        // one-step move with no distance (or a "turn until you see") that has no target, when the user
+        // named exactly one object, gets that object. Only one-step commands: in "face right when you
+        // reach the tree" the turn has no target, and mustn't get one.
         void AttachMissingTarget(NavigationCommand command, string utterance)
         {
+            if (command.steps.Length != 1) return;
             var said = ObjectVocabulary.WordsIn(utterance, grounding.KnownNames());
             if (said.Count != 1) return;
 
@@ -375,6 +402,44 @@ Command: go to the lamp (no lamp in the visible objects list)
                 bool openTurn = step.action == ActionType.Turn && seeking;
                 if (openMove || openTurn) step.condition = said[0];
             }
+        }
+
+        // Things the model was seen to get wrong in chains, read from the user's words instead: "turn
+        // right three times" came back as one turn, "...then turn around" lost its 180 degrees, and
+        // "left 2 meters" became a turn.
+        void ApplyRepeatsAndTurnAround(NavigationCommand command, string utterance)
+        {
+            string text = " " + utterance.ToLowerInvariant().Replace(',', ' ').Replace('.', ' ') + " ";
+
+            int times = text.Contains(" twice ") || text.Contains(" two times ") || text.Contains(" 2 times ") ? 2
+                : text.Contains(" three times ") || text.Contains(" thrice ") || text.Contains(" 3 times ") ? 3
+                : text.Contains(" four times ") || text.Contains(" 4 times ") ? 4
+                : text.Contains(" five times ") || text.Contains(" 5 times ") ? 5 : 1;
+            if (times > 1 && command.steps.Length == 1)
+            {
+                var one = command.steps[0];
+                var repeated = new NavigationStep[times];
+                for (int i = 0; i < times; i++)
+                    repeated[i] = new NavigationStep { action = one.action, direction = one.direction, amount = one.amount, magnitude = one.magnitude, condition = one.condition, until = one.until };
+                command.steps = repeated;
+            }
+
+            // "Left 2 meters" came back as a 2-degree turn. Turns are in degrees: a sized "turn" in a
+            // command that talks in meters, never degrees, is a move.
+            bool saysMeters = text.Contains(" meter") || text.Contains(" metre") || text.Contains(" m ");
+            bool saysDegrees = text.Contains(" degree");
+            if (saysMeters && !saysDegrees)
+                foreach (var step in command.steps)
+                    if (step.action == ActionType.Turn && step.HasMagnitude && step.magnitude < 20f) step.action = ActionType.Move;
+
+            bool turnAround = (text.Contains(" turn around ") || text.Contains(" turn round ")) && !text.Contains(" until ") && !text.Contains(" see ");
+            if (turnAround)
+                foreach (var step in command.steps)
+                    if (step.action == ActionType.Turn && !step.HasMagnitude && !step.HasCondition && step.amount == AmountType.None)
+                    {
+                        step.amount = AmountType.Exact;
+                        step.magnitude = 180f;
+                    }
         }
 
         // The object a step is about, as a scan name ("sofa") or one object's id, worked out from the
@@ -726,10 +791,14 @@ Command: go to the lamp (no lamp in the visible objects list)
             }
             else if (outcome == CommandOutcome.NotFound)
             {
-                string what = "it";
-                foreach (var s in command.steps)
-                    if (s.action == ActionType.Turn && s.HasCondition) { what = Article(grounding.NameFor(s.condition)); break; }
-                OnStatus?.Invoke("I turned all the way around and couldn't find " + what + ".");
+                var failed = controller.FailedStep;
+                string what = failed != null && failed.HasCondition ? Article(grounding.NameFor(failed.condition)) : "it";
+                if (failed != null && failed.action == ActionType.Turn)
+                    OnStatus?.Invoke("I turned all the way around and couldn't find " + what + ".");
+                else if (failed != null && failed.until == UntilType.See)
+                    OnStatus?.Invoke("I went as far as I could and didn't see " + what + ".");
+                else
+                    OnStatus?.Invoke("I can't see " + what + " that way from here.");
             }
         }
     }

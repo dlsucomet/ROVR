@@ -31,10 +31,13 @@ namespace ROVR
 
         const int BlockedFramesLimit = 10;   // consecutive frames with (almost) no progress = blocked
         const float ProbeLift = 0.1f;        // probe capsule starts this far above the feet, clear of the floor
+        const float LookInterval = 0.1f;     // how often "until you see X" looks (a full scan of the view)
 
         public event Action<NavigationCommand, CommandOutcome> OnCommandFinished;
 
         public bool IsBusy => activeRoutine != null;
+        // The step that ended a command early (blocked, or its target not found), for the message.
+        public NavigationStep FailedStep { get; private set; }
 
         CharacterController controller;
         Coroutine activeRoutine;
@@ -84,6 +87,7 @@ namespace ROVR
         IEnumerator RunSteps(NavigationCommand command)
         {
             var outcome = CommandOutcome.Completed;
+            FailedStep = null;
 
             foreach (var step in command.steps)
             {
@@ -93,6 +97,7 @@ namespace ROVR
                 if (stepOutcome != CommandOutcome.Completed)
                 {
                     outcome = stepOutcome; // a blocked / halted / not-found step ends the whole chain
+                    FailedStep = step;
                     break;
                 }
             }
@@ -136,12 +141,39 @@ namespace ROVR
 
             float travelled = 0f;
             int blockedFrames = 0;
+            bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
+
+            // "Move forward until you see the door": go that way, and stop the moment it's in view.
+            if (step.HasCondition && step.until == UntilType.See && grounding != null)
+            {
+                float nextLook = 0f;
+                while (travelled < target)
+                {
+                    if (Time.time >= nextLook)
+                    {
+                        nextLook = Time.time + LookInterval;
+                        if (grounding.IsVisible(step.condition)) yield break;
+                    }
+                    if (!Step(dir, speed, ref travelled, target, ref blockedFrames)) yield break;
+                    yield return null;
+                }
+                stepOutcome = CommandOutcome.NotFound;
+                yield break;
+            }
 
             // Heading for one particular object ("plant-4"): walk straight toward it, even if it's a
-            // little to one side of where the user faces. The view doesn't turn.
-            Transform goal = step.HasCondition && grounding != null && (step.direction == DirectionType.Forward
-                || step.direction == DirectionType.Left || step.direction == DirectionType.Right)
-                ? grounding.ObjectWithId(step.condition) : null;
+            // little to one side of where the user faces. The view doesn't turn. A later step of a
+            // chain ("...then go to the door") names a kind of object: take the nearest one that way.
+            Transform goal = null;
+            if (step.HasCondition && grounding != null && horizontal)
+            {
+                goal = grounding.ObjectWithId(step.condition);
+                if (goal == null && !grounding.IsCollapsedName(step.condition))
+                {
+                    goal = NearestThatWay(step.condition, step.direction);
+                    if (goal == null) { stepOutcome = CommandOutcome.NotFound; yield break; }
+                }
+            }
 
             while (travelled < target)
             {
@@ -161,29 +193,50 @@ namespace ROVR
                         thisSpeed = Mathf.Max(minCreepSpeed, speed * (gap - stopGap) / rampLength);
                 }
 
-                float delta = Mathf.Min(thisSpeed * Time.deltaTime, target - travelled);
-                Vector3 before = transform.position;
-                controller.Move(dir * delta);
-
-                // Count what actually happened, not what was asked for, so walls end the step.
-                float moved = Vector3.Dot(transform.position - before, dir);
-                travelled += Mathf.Max(0f, moved);
-
-                if (moved < delta * 0.25f)
-                {
-                    if (++blockedFrames >= BlockedFramesLimit)
-                    {
-                        stepOutcome = CommandOutcome.Blocked;
-                        yield break;
-                    }
-                }
-                else
-                {
-                    blockedFrames = 0;
-                }
-
+                if (!Step(dir, thisSpeed, ref travelled, target, ref blockedFrames)) yield break;
                 yield return null;
             }
+        }
+
+        // One frame of movement. Counts what actually happened, not what was asked for, so walls end
+        // the step: false (with stepOutcome Blocked) after BlockedFramesLimit frames of no progress.
+        bool Step(Vector3 dir, float speed, ref float travelled, float target, ref int blockedFrames)
+        {
+            float delta = Mathf.Min(speed * Time.deltaTime, target - travelled);
+            Vector3 before = transform.position;
+            controller.Move(dir * delta);
+
+            float moved = Vector3.Dot(transform.position - before, dir);
+            travelled += Mathf.Max(0f, moved);
+
+            if (moved < delta * 0.25f)
+            {
+                if (++blockedFrames >= BlockedFramesLimit)
+                {
+                    stepOutcome = CommandOutcome.Blocked;
+                    return false;
+                }
+            }
+            else
+            {
+                blockedFrames = 0;
+            }
+            return true;
+        }
+
+        // The nearest object with this name in view that lies the way of the move.
+        Transform NearestThatWay(string name, DirectionType direction)
+        {
+            Transform best = null;
+            float bestDistance = float.MaxValue;
+            foreach (var o in grounding.ScanFieldOfView())
+            {
+                if (!grounding.Matches(o, name)) continue;
+                bool thatWay = direction == DirectionType.Forward ? Mathf.Abs(o.angleDegrees) <= 25f
+                    : direction == DirectionType.Left ? o.angleDegrees < -5f : o.angleDegrees > 5f;
+                if (thatWay && o.distanceMeters < bestDistance) { best = o.target; bestDistance = o.distanceMeters; }
+            }
+            return best;
         }
 
         // Distance the body can still travel along `dir` before touching the target (anything with that

@@ -74,6 +74,10 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 | `walk to the couch` (House) | Everything on screen has a name, and everyday words work: goes to the sofa |
 | `go to the plant` (House start) | Several plants: asks which, and they glow. Look at one and say `that one`, or say `the left one` / `the one next to the stool` |
 | `go to the left plant`, `go to that tree` | Picks one straight away (`that` = the one you're looking at) |
+| `move forward 10 meters, then turn right` | Steps run in order |
+| `face to the right when you reach the tree` | Goes to the tree, then turns right |
+| `move forward and turn left when you see the door` | Walks until the door comes into view, then turns |
+| `turn right three times` | Repeats the turn |
 | `turn around until you see the tree` | Turns in 90° steps until the tree is in view (Plain) |
 | `wait, I mean left` (while moving) | Stops instantly, then moves left |
 | `stop`, or `ops` | Stops immediately |

@@ -395,7 +395,7 @@ public class VRControlPanel : MonoBehaviour
             switch (step.action)
             {
                 case ActionType.Move:
-                    string how = step.HasCondition ? " to the " + target
+                    string how = step.HasCondition ? (step.until == UntilType.See ? " until I see the " : " to the ") + target
                         : step.amount == AmountType.Small ? " a bit"
                         : step.HasMagnitude ? " " + step.magnitude.ToString("0.#") + " m"
                         : "";
