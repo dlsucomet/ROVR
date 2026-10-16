@@ -19,6 +19,9 @@ namespace ROVR
         [Range(0f, 0.95f)] [SerializeField] float clearMiddle = 0.55f;
 
         const float Distance = 0.2f; // in front of the eyes; must be beyond the camera's near clip plane
+        // The quad is this much bigger than the view and fully dark past the view's edge: in a headset
+        // each eye looks from a little to one side, and an exact fit would leave a clear strip.
+        const float Oversize = 1.5f;
 
         Camera cam;
         Transform quad;
@@ -64,7 +67,7 @@ namespace ROVR
             // Cover exactly the view, so the ring's edge is the screen's edge.
             float d = quad.localPosition.z;
             float height = 2f * d * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
-            quad.localScale = new Vector3(height * cam.aspect, height, 1f) * 1.02f;
+            quad.localScale = new Vector3(height * cam.aspect, height, 1f) * Oversize;
         }
 
         void OnDestroy()
@@ -83,7 +86,7 @@ namespace ROVR
                 {
                     float u = (x + 0.5f) / size * 2f - 1f, v = (y + 0.5f) / size * 2f - 1f;
                     float r = Mathf.Sqrt(u * u + v * v);
-                    float a = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(clearMiddle, 1.05f, r));
+                    float a = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(clearMiddle / Oversize, 1.02f / Oversize, r));
                     pixels[y * size + x] = new Color32(0, 0, 0, (byte)(a * 255f));
                 }
             tex.SetPixels32(pixels);

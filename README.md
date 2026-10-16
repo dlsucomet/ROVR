@@ -13,6 +13,7 @@ Voice navigation runs through the LLM in `Assets/main.unity`:
 
 - **Speech:** [whisper.unity](https://github.com/Macoron/whisper.unity) transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine.
 - **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons, a mic mute button and Slow / Normal / Fast speed buttons. **The mic starts muted.**
+- **Maze minimap:** in the corner of the view while in the Maze: the whole maze, you, and the exit.
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
 - **Halt words** (`stop`, `wait`, and Filipino `ops`) are fixed keywords. They stop the player before the sentence is finished, without the LLM.
 - **Fallback:** untick **Use LLM** on the panel for the four fixed phrases only (`move forward/backward/left/right`).

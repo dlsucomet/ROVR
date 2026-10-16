@@ -68,6 +68,7 @@ Three speeds: **Slow 1 m/s, Normal 2 m/s, Fast 3 m/s** (`slowSpeed`, `moveSpeed`
 `VRControlPanel` keeps all of Vert's behaviour (world buttons, mute button, subtitles) and adds:
 
 - **Slow / Normal / Fast** speed buttons (see Speed above).
+- **Maze minimap** (`Assets/GUI/MazeMinimap.cs`, added at Play): in the lower-right corner of the view, only while in the Maze. It shows the whole maze, a blue arrow for you and the exit in yellow, drawn from the Maze's own walls, so it always matches the generated maze. It turns with your head so "up" is roughly where you face, but damped (`turnSmoothing`, 0.6 s): it eases round instead of spinning with every glance. Size and position are in its Inspector fields.
 
 - **Use LLM** (on by default): finished sentences go to the pipeline. Off: only Vert's fixed phrases (`move forward/backward/left/right`) work, as before.
 - **The microphone starts muted.** Press Unmute to start listening.

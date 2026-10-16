@@ -602,7 +602,7 @@ Command: go to the lamp (no lamp in the visible objects list)
                 optionIds = thatWay.ConvertAll(o => o.id)
             };
             glowNext = thatWay.ConvertAll(o => o.target);
-            return "Which " + name + "? Look at the one you mean and say \"that one\", or tell me " + DescribeOptions(thatWay) + ".";
+            return "Which " + name + "? Look at it and say \"that one\", or say " + DescribeOptions(thatWay) + ".";
         }
 
         bool InDirection(GroundedObject o, DirectionType direction)
@@ -643,8 +643,8 @@ Command: go to the lamp (no lamp in the visible objects list)
             if (!TryPick(options, answer.which, answer.whichNear, visible, out GroundedObject picked))
             {
                 string again = answer.which == "looking"
-                    ? "I can't tell which one you're looking at. Look straight at it and say \"that one\", or tell me " + DescribeOptions(options) + "."
-                    : "Which " + pc.name + "? Look at the one you mean and say \"that one\", or tell me " + DescribeOptions(options) + ".";
+                    ? "I can't tell which one you're looking at. Look straight at it and say \"that one\", or say " + DescribeOptions(options) + "."
+                    : "Which " + pc.name + "? Look at it and say \"that one\", or say " + DescribeOptions(options) + ".";
                 OnCommandResolved?.Invoke(NavigationCommand.Clarification(again));
                 Ask(again);
                 return;
@@ -800,15 +800,15 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         static Vector3 CenterOf(Transform t) { return FOVMetadataGrounding.CenterOf(t); }
 
-        // "the one on your left, the one ahead or the one on your right" (or nearer / farther).
+        // "left, ahead or right" (or "nearer or farther"): the short answers the engine understands.
         static string DescribeOptions(List<GroundedObject> options)
         {
             var sides = new List<string>();
             foreach (var side in new[] { "left", "ahead", "right" })
                 if (options.Exists(o => FOVMetadataGrounding.SideOf(o.angleDegrees) == side))
-                    sides.Add(side == "ahead" ? "the one ahead" : "the one on your " + side);
+                    sides.Add(side);
             if (sides.Count < 2)
-                return "the nearer or the farther one";
+                return "nearer or farther";
             return sides.Count == 2 ? sides[0] + " or " + sides[1] : sides[0] + ", " + sides[1] + " or " + sides[2];
         }
 

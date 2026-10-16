@@ -78,6 +78,9 @@ public class VRControlPanel : MonoBehaviour
         // camera may not have registered yet during Awake.
         if (useLLM) SetUpLLMPipeline();
 
+        // The Maze minimap (corner of the view, only in the Maze), for both voice and fixed-phrase modes.
+        if (FindAnyObjectByType<MazeMinimap>() == null) gameObject.AddComponent<MazeMinimap>();
+
         // Force initial spawn rotation to plain destination facing 0 degrees Y
         TeleportTo(plainDestination, 0f);
 
@@ -90,6 +93,15 @@ public class VRControlPanel : MonoBehaviour
         if (normalButton != null) normalButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Normal));
         if (fastButton != null) fastButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Fast));
         ShowSpeed(SpeedLevel.Normal, false);
+
+        // Questions can be longer than a line ("Which plant? Look at it..."): wrap, and shrink to fit the box.
+        if (outputText != null)
+        {
+            outputText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            outputText.resizeTextForBestFit = true;
+            outputText.resizeTextMinSize = Mathf.Max(8, outputText.fontSize / 2);
+            outputText.resizeTextMaxSize = outputText.fontSize;
+        }
 
         if (micMuteButton != null)
         {
