@@ -83,7 +83,7 @@ STEPS. Each step has:
 
 SEVERAL STEPS. A command can have several steps, done in order. 'Move forward 10 meters, then turn right' = a move step, then a turn step. 'Face right when you reach the tree' = move to the tree, then turn right: put the steps in the order they happen, not the order they are said. 'Move forward and turn left when you see the door' = move forward with condition door and until see, then turn left. 'Turn right three times' = three turn steps; 'move forward 2 meters twice' = two move steps of 2 meters.
 
-TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
+TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. A turn can be any angle: 'turn 30 degrees to the right' = amount exact, magnitude 30; 'turn left a little' = amount small. 'Face the door', 'turn to the door' or 'look at the door' = a turn step with condition door (direction none unless a side is said). 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
 
 NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
 
@@ -363,10 +363,10 @@ Command: go to the lamp (no lamp in the visible objects list)
 
                 if (step.action == ActionType.Turn)
                 {
-                    // Turning until X is in view is how X gets found (6.4.2), so X needn't be in view now.
-                    // Turning until you see something you can already see would silently do nothing.
-                    if (command.steps.Length == 1 && visible.Exists(o => grounding.Matches(o, target)))
-                        return "The " + name + " is already in view. Where do you want to go?";
+                    // Turning until X is in view is how X gets found (6.4.2), so X needn't be in view now; if
+                    // it is, the turn faces it. Already facing it, the turn would silently do nothing.
+                    if (command.steps.Length == 1 && visible.Exists(o => grounding.Matches(o, target) && Mathf.Abs(o.angleDegrees) <= 3f))
+                        return "You're already facing the " + name + ". Where do you want to go?";
                     continue;
                 }
 
@@ -591,6 +591,23 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         void KeepSaidChoice(NavigationCommand command, string utterance)
         {
+            // A move to an object heads for the object. The model was seen to turn "the left plant" into
+            // a move to the left, and to copy "left" from the previous command into "go to the plant":
+            // a side the user never said is dropped, and "the left X" is which one, not which way.
+            string spoken = " " + string.Join(" ", WordsOf(utterance)) + " ";
+            foreach (var step in command.steps)
+            {
+                if (step.action != ActionType.Move || !step.HasCondition) continue;
+                if (step.direction != DirectionType.Left && step.direction != DirectionType.Right) continue;
+                string side = step.direction == DirectionType.Left ? "left" : "right";
+                if (!spoken.Contains(" " + side + " ")) step.direction = DirectionType.Forward;
+                else if (spoken.Contains(" the " + side + " "))
+                {
+                    step.direction = DirectionType.Forward;
+                    if (command.which.Length == 0) command.which = side;
+                }
+            }
+
             // "The plant by the stool": the target is the plant, picked by what it's next to.
             var known = grounding.KnownNames();
             string nearWord = ObjectVocabulary.NearObjectIn(utterance, known);
@@ -769,13 +786,15 @@ Command: go to the lamp (no lamp in the visible objects list)
             return ("aeiou".IndexOf(char.ToLowerInvariant(name[0])) >= 0 ? "an " : "a ") + name;
         }
 
-        // "A bit" becomes the user's current bit size in metres; a small turn is one snap.
+        const float SmallTurnDegrees = 30f; // "turn left a little"
+
+        // "A bit" becomes the user's current bit size in metres; a small turn is 30 degrees.
         void ResolveAmounts(NavigationCommand command)
         {
             foreach (var step in command.steps)
             {
                 if (step.amount != AmountType.Small) continue;
-                step.magnitude = step.action == ActionType.Move ? Habits.BitMeters : 0f;
+                step.magnitude = step.action == ActionType.Move ? Habits.BitMeters : SmallTurnDegrees;
             }
         }
 

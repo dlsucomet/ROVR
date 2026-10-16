@@ -319,6 +319,7 @@ public class VRControlPanel : MonoBehaviour
         _ollama = GetOrAdd<OllamaClient>();
         _resolver = GetOrAdd<SemanticIntentResolver>();
         GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
+        GetOrAdd<ComfortVignette>(); // darkens the edges of the view while turning
 
         _resolver.OnCommandResolved += HandleCommandResolved;
         _resolver.OnClarificationNeeded += HandleQuestion;
@@ -402,7 +403,8 @@ public class VRControlPanel : MonoBehaviour
                     parts.Add("moving" + direction + how);
                     break;
                 case ActionType.Turn:
-                    string until = step.HasCondition ? " until I see the " + target
+                    string until = step.HasCondition ? " to face the " + target
+                        : step.amount == AmountType.Small ? " a little"
                         : step.HasMagnitude ? " " + step.magnitude.ToString("0") + "°"
                         : "";
                     parts.Add("turning" + direction + until);

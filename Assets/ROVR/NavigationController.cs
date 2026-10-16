@@ -3,8 +3,9 @@
 // 6.2.3): the LLM never touches trajectory math, it only hands off a NavigationCommand. This
 // controller is what actually moves the CharacterController, and it's the layer responsible for
 // the cybersickness mitigations described in Chapter 2 — fixed velocity (no acceleration ramp up),
-// instant discrete snap-turns instead of continuous yaw, and forward locomotion locked to the
-// horizontal plane regardless of head pitch (Section 3.3.1).
+// short eased turns of any angle with a comfort vignette (ComfortVignette; these replaced instant
+// 90-degree snap-turns after QA feedback found the snaps jarring), and forward locomotion locked to
+// the horizontal plane regardless of head pitch (Section 3.3.1).
 //
 // Every step ends in an outcome (Completed / Halted / Blocked / NotFound) reported through
 // OnCommandFinished, so nothing fails silently and a blocked step can't stall a chain.
@@ -21,8 +22,11 @@ namespace ROVR
         [SerializeField] FOVMetadataGrounding grounding; // needed for "turn until you see X"
         [SerializeField] float moveSpeed = 2f;           // m/s, fixed cap — no acceleration curve
         [SerializeField] float verticalSpeed = 1.5f;     // m/s for explicit up/down commands
-        [SerializeField] float snapDegrees = 90f;        // turns are whole multiples of this (Section 2.1)
-        [SerializeField] float snapPause = 0.25f;        // seconds between successive snaps
+        [Tooltip("Seconds a 90-degree turn takes. Turns ease in and out; other angles take proportionally long (but at least shortestTurnSeconds).")]
+        [SerializeField] float quarterTurnSeconds = 0.9f;
+        [SerializeField] float shortestTurnSeconds = 0.35f;
+        [Tooltip("Degrees per second while sweeping round for 'turn until you see X'.")]
+        [SerializeField] float searchTurnSpeed = 120f;
         [SerializeField] float stopGap = 0.5f;           // m between the body and the target when a conditional move stops (6.3.4)
         [SerializeField] float rampLength = 1f;          // m over which speed eases to a stop before stopGap (6.3.4)
         [SerializeField] float minCreepSpeed = 0.15f;    // m/s floor during the ramp so the stop is reached
@@ -32,10 +36,13 @@ namespace ROVR
         const int BlockedFramesLimit = 10;   // consecutive frames with (almost) no progress = blocked
         const float ProbeLift = 0.1f;        // probe capsule starts this far above the feet, clear of the floor
         const float LookInterval = 0.1f;     // how often "until you see X" looks (a full scan of the view)
+        const float DefaultTurnDegrees = 90f; // "turn left" with no angle
+        const float FacedDegrees = 3f;       // "turn until you see X" ends with X this close to the middle of the view
 
         public event Action<NavigationCommand, CommandOutcome> OnCommandFinished;
 
         public bool IsBusy => activeRoutine != null;
+        public bool IsTurning { get; private set; } // for the comfort vignette
         // The step that ended a command early (blocked, or its target not found), for the message.
         public NavigationStep FailedStep { get; private set; }
 
@@ -78,6 +85,7 @@ namespace ROVR
 
             StopCoroutine(activeRoutine);
             activeRoutine = null;
+            IsTurning = false;
 
             var finished = current;
             current = null;
@@ -285,38 +293,97 @@ namespace ROVR
         IEnumerator RunTurn(NavigationStep step)
         {
             float sign = step.direction == DirectionType.Left ? -1f : 1f;
+            IsTurning = true;
 
             if (step.HasCondition)
             {
-                // "Turn around until you see the door" (6.4.2): keep snapping until it's in view, at
-                // most one full circle.
-                int maxSnaps = Mathf.Max(1, Mathf.RoundToInt(360f / snapDegrees));
-                for (int i = 0; i <= maxSnaps; i++)
+                // "Turn until you see X" / "face X" (6.4.2). If X is in view, turn the short way to face
+                // it. Otherwise sweep round the way asked until X shows up (at most a full circle), then
+                // ease onto it, so it ends up straight ahead.
+                if (TryAngleTo(step.condition, out float angle))
                 {
-                    if (grounding != null && grounding.IsVisible(step.condition)) yield break;
-                    if (i == maxSnaps) break;
-
-                    Snap(sign * snapDegrees);
-                    yield return new WaitForSeconds(snapPause);
+                    if (Mathf.Abs(angle) > FacedDegrees) yield return TurnBy(angle);
                 }
+                else
+                {
+                    float swept = 0f, speed = 0f, nextLook = 0f;
+                    bool found = false;
+                    while (swept < 360f && !found)
+                    {
+                        speed = Mathf.MoveTowards(speed, searchTurnSpeed, searchTurnSpeed * 4f * Time.deltaTime); // eases in over 0.25 s
+                        float delta = Mathf.Min(speed * Time.deltaTime, 360f - swept);
+                        Rotate(sign * delta);
+                        swept += delta;
+                        if (Time.time >= nextLook)
+                        {
+                            nextLook = Time.time + LookInterval;
+                            found = TryAngleTo(step.condition, out angle);
+                        }
+                        yield return null;
+                    }
+                    if (!found)
+                    {
+                        IsTurning = false;
+                        stepOutcome = CommandOutcome.NotFound;
+                        yield break;
+                    }
 
-                stepOutcome = CommandOutcome.NotFound;
+                    // Slow down onto it from the sweep speed, rather than stopping dead and starting again.
+                    float aim = HeadYaw() + angle;
+                    while (true)
+                    {
+                        float remaining = Mathf.DeltaAngle(HeadYaw(), aim);
+                        if (Mathf.Abs(remaining) <= FacedDegrees * 0.5f) break;
+                        speed = Mathf.Min(searchTurnSpeed, Mathf.Max(20f, Mathf.Abs(remaining) * 4f));
+                        Rotate(Mathf.Sign(remaining) * Mathf.Min(Mathf.Abs(remaining), speed * Time.deltaTime));
+                        yield return null;
+                    }
+                }
+                IsTurning = false;
                 yield break;
             }
 
-            // Whole multiples of the snap angle only: "turn around" is two snaps, 45 rounds up to one.
-            float degrees = step.HasMagnitude ? step.magnitude : snapDegrees;
-            int snaps = Mathf.Max(1, Mathf.RoundToInt(degrees / snapDegrees));
+            // Any angle ("turn 30 degrees right"); "turn left" is 90, "turn around" 180.
+            float degrees = step.HasMagnitude ? step.magnitude : DefaultTurnDegrees;
+            yield return TurnBy(sign * degrees);
+            IsTurning = false;
+        }
 
-            for (int i = 0; i < snaps; i++)
+        // An eased turn of an exact angle (positive = right): slow, faster, slow.
+        IEnumerator TurnBy(float degrees)
+        {
+            float seconds = Mathf.Max(shortestTurnSeconds, quarterTurnSeconds * Mathf.Abs(degrees) / 90f);
+            float done = 0f, t = 0f;
+            while (t < seconds)
             {
-                Snap(sign * snapDegrees);
-                yield return new WaitForSeconds(snapPause);
+                t = Mathf.Min(seconds, t + Time.deltaTime);
+                float target = degrees * Mathf.SmoothStep(0f, 1f, t / seconds);
+                Rotate(target - done);
+                done = target;
+                yield return null;
             }
         }
 
-        // Instant yaw about the user's head, not the rig origin, so the view stays put in the room.
-        void Snap(float degrees)
+        // Horizontal angle from where the user faces to the middle of the nearest visible X; false if
+        // no X is in view.
+        bool TryAngleTo(string target, out float angle)
+        {
+            angle = 0f;
+            if (grounding == null) return false;
+            if (!grounding.TryFindVisible(grounding.ScanFieldOfView(), target, out GroundedObject o)) return false;
+            Vector3 to = Vector3.ProjectOnPlane(FOVMetadataGrounding.CenterOf(o.target) - pov.position, Vector3.up);
+            angle = Vector3.SignedAngle(PlanarForward(), to, Vector3.up);
+            return true;
+        }
+
+        float HeadYaw()
+        {
+            Vector3 f = PlanarForward();
+            return Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+        }
+
+        // Yaw about the user's head, not the rig origin, so the view stays put in the room.
+        void Rotate(float degrees)
         {
             Vector3 pivot = pov != null ? pov.position : transform.position;
             transform.RotateAround(pivot, Vector3.up, degrees);

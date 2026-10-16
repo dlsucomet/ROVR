@@ -78,6 +78,8 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 | `face to the right when you reach the tree` | Goes to the tree, then turns right |
 | `move forward and turn left when you see the door` | Walks until the door comes into view, then turns |
 | `turn right three times` | Repeats the turn |
+| `turn left a little`, `turn 45 degrees to the right` | Smooth turns of any angle, with the edges of the view darkened while turning |
+| `face the door` | Turns to face it |
 | `turn around until you see the tree` | Turns in 90° steps until the tree is in view (Plain) |
 | `wait, I mean left` (while moving) | Stops instantly, then moves left |
 | `stop`, or `ops` | Stops immediately |
