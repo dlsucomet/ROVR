@@ -59,6 +59,7 @@ public class VRControlPanel : MonoBehaviour
 
     // LLM pipeline (Assets/ROVR), on Player Body
     private SemanticIntentResolver _resolver;
+    private FOVMetadataGrounding _grounding;
     private VoiceCommandRouter _router;
 
     private void Start()
@@ -308,7 +309,7 @@ public class VRControlPanel : MonoBehaviour
         if (_resolver != null) return;
 
         // Order matters: each part looks for the ones before it when it is added.
-        GetOrAdd<FOVMetadataGrounding>();
+        _grounding = GetOrAdd<FOVMetadataGrounding>();
         GetOrAdd<NavigationController>();
         GetOrAdd<OllamaClient>();
         _resolver = GetOrAdd<SemanticIntentResolver>();
@@ -377,13 +378,14 @@ public class VRControlPanel : MonoBehaviour
     }
 
     // "Moving forward 5 m", "Moving left a bit", "Moving forward to the door, then turning right"
-    private static string Describe(NavigationCommand command)
+    private string Describe(NavigationCommand command)
     {
         var parts = new System.Collections.Generic.List<string>();
         foreach (var step in command.steps)
         {
             string direction = step.direction == DirectionType.None ? "" : " " + step.direction.ToString().ToLower();
-            string target = step.HasCondition ? step.condition.ToLower() : "";
+            // The target can be one particular object ("tree-3"); say what it is ("tree").
+            string target = step.HasCondition ? _grounding.NameFor(step.condition).ToLower() : "";
             switch (step.action)
             {
                 case ActionType.Move:

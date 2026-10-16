@@ -223,6 +223,7 @@ public static class MazeGenerator
         // Goal: visible pad just outside the exit; the trigger detects task completion.
         var goal = new GameObject("Goal");
         goal.tag = "Goal";
+        WorldKit.Label(goal, "exit");
         goal.transform.SetParent(root, false);
         goal.transform.localPosition = new Vector3(width + 3f, 0f, depth - CellSize / 2f);
 

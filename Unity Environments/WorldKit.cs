@@ -80,6 +80,30 @@ public static class WorldKit
         return go.transform;
     }
 
+    // Names an object for ROVR's LLM grounding ("sofa", "rock", "tree") by giving it a SceneLabel.
+    // Found by name, like the teleport link below, so these scripts still work in a project without
+    // ROVR's navigation scripts (the label is then skipped).
+    public static void Label(GameObject obj, string label)
+    {
+        if (obj == null || string.IsNullOrEmpty(label)) return;
+        if (!labelTypeLooked)
+        {
+            labelTypeLooked = true;
+            foreach (var t in TypeCache.GetTypesDerivedFrom<MonoBehaviour>())
+                if (t.Name == "SceneLabel") { labelType = t; break; }
+        }
+        if (labelType == null) return;
+
+        var component = obj.GetComponent(labelType);
+        if (component == null) component = obj.AddComponent(labelType);
+        var so = new SerializedObject(component);
+        so.FindProperty("label").stringValue = label;
+        so.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    static System.Type labelType;
+    static bool labelTypeLooked;
+
     // Points the scene's VRControlPanel teleport button for this world at the world's fresh "Start".
     // NewRoot() deletes the old world, which empties whatever the panel pointed at inside it, so
     // every generator calls this last. `field` is the panel's field, e.g. "mazeDestination".

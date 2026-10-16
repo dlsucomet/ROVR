@@ -65,16 +65,18 @@ A two-storey version (stairs and an upstairs master suite) is in git commit `f54
 - **To edit the layout:** the maze is the ASCII plan in `MazeGenerator.cs` (`Layout`). `+---+` are horizontal walls, `|` vertical walls, and a gap in the outer wall is an opening. Regenerate after editing. The SVG plan isn't regenerated automatically, so update it by hand if you change the layout.
 
 ### Plain: 100 × 100 m
-- A flat, barrier-free grass-green field with one **tree** as the only tagged point of reference, 18 m directly ahead of `Start`. It is a Nature Kit tree, 8 m tall.
-- The tree is tagged `Tree`, so the LLM can name it. To make it a purely visual landmark, set `TreeTag = null` in `PlainGenerator.cs`.
-- **Scenery** fills the field so it doesn't read as an empty slab: 18 rocks, 79 grass tufts, 40 flowers, 6 background trees and 2 ponds. It is scattered with a fixed random seed (`ScenerySeed`), so every participant gets the identical field. The ground within 6 m of `Start`, the strip from `Start` to the tree and the area round the tree are kept clear, and the background trees stand at least 35 m from `Start`, so the tagged tree stays the obvious landmark.
+- A flat, barrier-free grass-green field with one landmark **tree**, 18 m directly ahead of `Start`. It is a Nature Kit tree, 8 m tall, tagged `Tree`.
+- Like the scenery, it is named "tree" for the LLM. The background trees are trees too, so with one in view the system asks which tree you mean.
+- **Scenery** fills the field so it doesn't read as an empty slab: 18 rocks, 79 grass tufts, 40 flowers, 6 background trees and 2 ponds. It is scattered with a fixed random seed (`ScenerySeed`), so every participant gets the identical field. The ground within 6 m of `Start`, the strip from `Start` to the tree and the area round the tree are kept clear, and the background trees stand at least 35 m from `Start`, so the landmark tree stays the obvious one.
 - **Ponds:** two (5 m and 4 m radius): a solid disc of water ringed with stones and lily pads. They are obstacles to walk round, not water to wade through.
-- The scenery is untagged and solid. The LLM can't see it, but it still blocks movement and view. To change the amounts, edit the `Scenery` table in `PlainGenerator.cs`; set a count to 0 to remove that kind, or edit `Ponds` for the ponds.
+- The scenery is solid and named for the LLM (rocks, flowers, trees and ponds; grass tufts are not named, so they are never listed). To change the amounts, edit the `Scenery` table in `PlainGenerator.cs`; set a count to 0 to remove that kind, or edit `Ponds` for the ponds.
 - There's no boundary at the edge of the floor. Walking off it leaves the avatar floating over nothing, which matches "no barriers" in the thesis.
 
-## Tags
+## Names and tags
 
-The generators create these tags automatically.
+**Names.** Every object the LLM can be told about gets a `SceneLabel` with its everyday name: House furnishings ("sofa", "fridge", "chair", "stool", "plant", "statue"...; the table is `Labels` in `HouseGenerator.cs`), the Plain's trees, rocks, flowers and ponds, and the Maze's exit. Grass tufts, floors and ceilings get none. In a project without ROVR's navigation scripts the labels are simply skipped.
+
+**Tags.** The generators create these tags automatically.
 
 | Tag | On | Seen by the LLM by default |
 |---|---|---|
@@ -85,7 +87,7 @@ The generators create these tags automatically.
 | `Furniture` | All other House furnishings | No |
 | `Goal` | The Maze's goal trigger | No |
 
-What the LLM can see is set by `groundedTags` on `FOVMetadataGrounding` (in `Unity Navigation/`), not by these scripts. Furniture and Goal are left out so each world's metadata matches the thesis (§7.1.2). Add a tag to that list to expose it.
+Walls and doors are named by their tag. What the LLM is told about is described in [`Unity Navigation/`](../Unity%20Navigation/README.md).
 
 ## Collision
 

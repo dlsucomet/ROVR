@@ -336,10 +336,36 @@ public static class HouseGenerator
             box.center = all.center;
             box.size = all.size;
             TagAll(holder, F);
+            WorldKit.Label(holder, LabelFor(d.name));
         }
 
         if (skipped.Count > 0)
             Debug.LogWarning("[ROVR House] Skipped decor (copy Assets/Resources/Props/Nature into the project): " + string.Join(", ", skipped.ToArray()));
+    }
+
+    // What the LLM calls each furnishing: everyday words, so "go to the sofa" works. Numbered sets take
+    // their last word ("Dining Chair 3" is a chair, "Hall Plant 2" a plant); several props can share a
+    // name, and the scan tells them apart by where they are.
+    static readonly Dictionary<string, string> Labels = new Dictionary<string, string>
+    {
+        { "Living Sofa", "sofa" }, { "Coffee Table", "coffee table" }, { "TV Stand", "tv stand" }, { "Television", "tv" },
+        { "Living Armchair", "armchair" }, { "Living Armchair 2", "armchair" }, { "Bookshelf", "bookshelf" },
+        { "Side Table", "side table" }, { "Side Table 2", "side table" }, { "Floor Lamp", "lamp" }, { "Bedroom Lamp", "lamp" },
+        { "Console Table", "console table" }, { "Coat Rack", "coat rack" },
+        { "Fridge", "fridge" }, { "Counter West", "counter" }, { "Counter East", "counter" }, { "Counter Wall", "counter" },
+        { "Stove", "stove" }, { "Range Hood", "range hood" }, { "Kitchen Sink", "sink" }, { "Kitchen Island", "kitchen island" },
+        { "Dining Table", "dining table" }, { "China Cabinet", "cabinet" }, { "Pantry Shelf", "shelf" },
+        { "Powder Toilet", "toilet" }, { "Powder Vanity", "sink" }, { "Ensuite Toilet", "toilet" }, { "Ensuite Vanity", "sink" },
+        { "Ensuite Shower", "shower" }, { "Bed", "bed" }, { "Nightstand Left", "nightstand" }, { "Nightstand Right", "nightstand" },
+        { "Wardrobe", "wardrobe" }, { "Dresser", "dresser" }, { "Desk", "desk" }, { "Bedroom Chair", "chair" },
+        { "Console Statue", "statue" }, { "Cabinet Statue", "statue" }, { "Living Cactus", "cactus" },
+    };
+
+    static string LabelFor(string name)
+    {
+        if (Labels.TryGetValue(name, out string label)) return label;
+        string trimmed = name.TrimEnd(' ', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+        return trimmed.Substring(trimmed.LastIndexOf(' ') + 1).ToLowerInvariant();
     }
 
     static void BuildProps(Transform root)
@@ -361,6 +387,7 @@ public static class HouseGenerator
             }
 
             obj.name = p.name;
+            WorldKit.Label(obj, LabelFor(p.name));
         }
 
         BuildDecor(group);

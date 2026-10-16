@@ -51,13 +51,13 @@ STEPS. Each step has:
 - action: move | turn | stop
 - direction: forward | back | left | right | up | down | none
 - amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
-- condition: the object type to move toward or stop at (Wall, Door, Chair, Tree), copied from the visible objects list; when there is no target it is an empty string """" (never the word none)
+- condition: the object to move toward or stop at, in the user's own word, singular (tree, door, couch); when there is no target it is an empty string """" (never the word none)
 
-TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition Tree and amount none. For 'turn until you see X' the condition is always X, even when X is not in the visible objects list, because turning is how the user finds it.
+TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. 'turn around until you see the tree' = a turn step with condition Tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
 
 NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
 
-VISIBLE OBJECTS is the only thing you know about the world. Each entry has tag, distance_m, angle_deg (negative = left, positive = right, 0 = straight ahead) and side. Never use an object that is not in the list, except as the target of a turn ('turn until you see X'). If the user names an object that is not in the list, return no steps and ask where it is. If several listed objects match and the command does not say which, ask which one. Moving toward an object only works when it is ahead of the user; if its side is left or right, ask them to turn toward it first.
+VISIBLE OBJECTS is what the user can see right now. Each entry has name, distance_m, angle_deg (negative = left, positive = right, 0 = straight ahead) and side. Use it to understand the command. You do not decide whether an object is in view or which of several the user means: write the step with the object in the user's own word, and the system checks it against what is in view and asks the user when needed.
 
 PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'back' or 'the other way' keeps the same action (a turn stays a turn) with the opposite direction. If the command needs a previous command and it says 'Previous command: none', return no steps and ask what they want to do. Never take object information from the previous command.
 
@@ -68,8 +68,8 @@ If you cannot tell what the user wants, return no steps and put a short question
 EXAMPLES
 Command: move forward 5 meters
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":""""}],""clarification"":""""}
-Command: go forward until you reach the door (a Door is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""Door""}],""clarification"":""""}
+Command: go forward until you reach the door (a door is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door""}],""clarification"":""""}
 Command: back up a bit
 {""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
 Command: a bit more (previous command was a small move forward)
@@ -81,11 +81,13 @@ Command: move right half a meter
 Command: a bit more (Previous command: none)
 {""steps"":[],""clarification"":""More of what? Tell me which way to move.""}
 Command: turn around until you see a chair
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""Chair""}],""clarification"":""""}
-Command: turn around until you see the tree (no Tree in the visible objects list)
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""Tree""}],""clarification"":""""}
-Command: go to the tree (no Tree in the visible objects list)
-{""steps"":[],""clarification"":""I don't see a tree. Where is it relative to what you can see?""}";
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair""}],""clarification"":""""}
+Command: turn around until you see the tree (no tree in the visible objects list)
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":""""}
+Command: go to the couch (a sofa is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch""}],""clarification"":""""}
+Command: go to the lamp (no lamp in the visible objects list)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp""}],""clarification"":""""}";
 
         void Awake()
         {
@@ -186,7 +188,7 @@ Command: go to the tree (no Tree in the visible objects list)
             string userPrompt = BuildUserPrompt(utterance, grounding.ToJson(visible));
 
             ollama.RequestCommand(SystemPrompt, userPrompt,
-                command => { if (id == requestId) OnResolved(command, visible); },
+                command => { if (id == requestId) OnResolved(command, visible, utterance); },
                 error => { if (id == requestId) OnError?.Invoke(error); });
         }
 
@@ -213,10 +215,10 @@ Command: go to the tree (no Tree in the visible objects list)
             return sb.ToString();
         }
 
-        void OnResolved(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible)
+        void OnResolved(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible, string utterance)
         {
             // Closed World, enforced by the engine rather than trusted to the prompt.
-            string problem = command.IsClarification ? null : FindGroundingProblem(command, visible);
+            string problem = command.IsClarification ? null : FindGroundingProblem(command, visible, utterance);
             if (problem != null) command = NavigationCommand.Clarification(problem);
 
             OnCommandResolved?.Invoke(command);
@@ -243,40 +245,83 @@ Command: go to the tree (no Tree in the visible objects list)
         }
 
         // Returns a question for the user if any step targets something the user can't currently see.
-        string FindGroundingProblem(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible)
+        string FindGroundingProblem(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible, string utterance)
         {
+            AttachMissingTarget(command, utterance);
+
             var introducedByTurn = new System.Collections.Generic.HashSet<string>();
 
             foreach (var step in command.steps)
             {
                 if (!step.HasCondition) continue;
 
-                if (!grounding.TryNormalizeTag(step.condition, out string tag))
+                string target = ResolveTarget(step.condition, utterance, visible);
+                if (target == null)
                     return "I'm not sure what '" + step.condition + "' is here. What should I move toward?";
-                step.condition = tag;
+                step.condition = target;
+                string name = grounding.NameFor(target);
 
                 if (step.action == ActionType.Turn)
                 {
-                    introducedByTurn.Add(tag); // turning until X is in view is how X gets found (6.4.2)
+                    introducedByTurn.Add(target); // turning until X is in view is how X gets found (6.4.2)
 
                     // Turning until you see something you can already see would silently do nothing.
-                    if (command.steps.Length == 1 && visible.Exists(o => string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase)))
-                        return "The " + tag.ToLowerInvariant() + " is already in view. Where do you want to go?";
+                    if (command.steps.Length == 1 && visible.Exists(o => grounding.Matches(o, target)))
+                        return "The " + name + " is already in view. Where do you want to go?";
                     continue;
                 }
 
-                bool inView = visible.Exists(o => string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase));
-                if (!inView && !introducedByTurn.Contains(tag))
-                    return "I don't see a " + tag.ToLowerInvariant() + " right now. Where is it relative to what you can see?";
+                bool inView = visible.Exists(o => grounding.Matches(o, target));
+                if (!inView && !introducedByTurn.Contains(target))
+                    return "I don't see " + Article(name) + " right now. Where is it relative to what you can see?";
 
                 bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
-                if (inView && horizontal && !introducedByTurn.Contains(tag) && !grounding.IsCollapsedTag(tag))
+                if (inView && horizontal && !introducedByTurn.Contains(target) && !grounding.IsCollapsedName(name))
                 {
-                    string aim = CheckAim(tag, step.direction, visible);
+                    string aim = CheckAim(target, step.direction, visible);
                     if (aim != null) return aim;
                 }
             }
             return null;
+        }
+
+        // "Go to the tree" must never become an endless walk because the model left out the target: a
+        // move with no distance (or a "turn until you see") that has no target, when the user named
+        // exactly one object, gets that object.
+        void AttachMissingTarget(NavigationCommand command, string utterance)
+        {
+            var said = ObjectVocabulary.WordsIn(utterance, grounding.KnownNames());
+            if (said.Count != 1) return;
+
+            string text = " " + utterance.ToLowerInvariant() + " ";
+            bool seeking = text.Contains(" see ") || text.Contains(" find ") || text.Contains(" face ");
+            foreach (var step in command.steps)
+            {
+                if (step.HasCondition || step.HasMagnitude || step.amount != AmountType.None) continue;
+                bool openMove = step.action == ActionType.Move && step.direction != DirectionType.Up && step.direction != DirectionType.Down;
+                bool openTurn = step.action == ActionType.Turn && seeking;
+                if (openMove || openTurn) step.condition = said[0];
+            }
+        }
+
+        // The object a step is about, as a scan name ("sofa") or one object's id, worked out from the
+        // word the model wrote and, above all, the words the user actually said: if the model named
+        // something the user never mentioned, what the user said wins.
+        string ResolveTarget(string condition, string utterance, System.Collections.Generic.List<GroundedObject> visible)
+        {
+            if (grounding.IsId(condition)) return condition.Trim().ToLowerInvariant();
+
+            var known = grounding.KnownNames();
+            var names = ObjectVocabulary.NamesFor(condition, known);
+            var said = ObjectVocabulary.WordsIn(utterance, known);
+            if (said.Count > 0 && !said.Exists(w => ObjectVocabulary.NamesFor(w, known).Exists(names.Contains)))
+                names = ObjectVocabulary.NamesFor(said[0], known);
+            if (names.Count == 0) return null;
+
+            // Asked for "a chair" and an armchair is what's in view: that's the one.
+            foreach (var n in names)
+                if (visible.Exists(o => o.name == n)) return n;
+            return names[0];
         }
 
         // Moving toward "the chair" only makes sense if a chair lies that way: roughly ahead for
@@ -284,7 +329,7 @@ Command: go to the tree (no Tree in the visible objects list)
         // Several in different directions is the thesis's ambiguity case (5.4.3): ask, rather than
         // pick one. Objects in a line (two doors down a corridor) aren't ambiguous, since the
         // nearest is reached first.
-        string CheckAim(string tag, DirectionType direction, System.Collections.Generic.List<GroundedObject> visible)
+        string CheckAim(string target, DirectionType direction, System.Collections.Generic.List<GroundedObject> visible)
         {
             float minAngle = float.MaxValue, maxAngle = float.MinValue;
             int candidates = 0;
@@ -293,7 +338,7 @@ Command: go to the tree (no Tree in the visible objects list)
 
             foreach (var o in visible)
             {
-                if (!string.Equals(o.tag, tag, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!grounding.Matches(o, target)) continue;
 
                 if (!haveNearest || o.distanceMeters < nearest.distanceMeters) { nearest = o; haveNearest = true; }
 
@@ -308,17 +353,22 @@ Command: go to the tree (no Tree in the visible objects list)
                 maxAngle = Mathf.Max(maxAngle, o.angleDegrees);
             }
 
-            string name = tag.ToLowerInvariant();
+            string name = grounding.NameFor(target);
             if (candidates == 0)
             {
                 string where = nearest.angleDegrees < 0f ? "left" : "right";
                 return direction == DirectionType.Forward
                     ? "The " + name + " is off to your " + where + ". Turn to face it, then say it again."
-                    : "I don't see a " + name + " to your " + (direction == DirectionType.Left ? "left" : "right") + ". It's off to your " + where + ".";
+                    : "I don't see " + Article(name) + " to your " + (direction == DirectionType.Left ? "left" : "right") + ". It's off to your " + where + ".";
             }
             if (maxAngle - minAngle > AmbiguousSpreadDegrees)
                 return "There's more than one " + name + " in view. Face the one you mean and say it again.";
             return null;
+        }
+
+        static string Article(string name)
+        {
+            return ("aeiou".IndexOf(char.ToLowerInvariant(name[0])) >= 0 ? "an " : "a ") + name;
         }
 
         // "A bit" becomes the user's current bit size in metres; a small turn is one snap.
@@ -345,7 +395,7 @@ Command: go to the tree (no Tree in the visible objects list)
             {
                 string what = "it";
                 foreach (var s in command.steps)
-                    if (s.action == ActionType.Turn && s.HasCondition) { what = "a " + s.condition.ToLowerInvariant(); break; }
+                    if (s.action == ActionType.Turn && s.HasCondition) { what = Article(grounding.NameFor(s.condition)); break; }
                 OnStatus?.Invoke("I turned all the way around and couldn't find " + what + ".");
             }
         }

@@ -111,6 +111,7 @@ public static class PlainGenerator
 
         var tree = PlaceModel(root, prefab, "Tree", position.x, position.z, TreeHeight, 0f);
         TagAll(tree, TreeTag); // every child too, so a ray hitting any part reads "Tree"
+        WorldKit.Label(tree, "tree");
     }
 
     // Rocks, grass and flowers, scattered with a fixed seed. Untagged and solid.
@@ -145,7 +146,8 @@ public static class PlainGenerator
                 var prefab = prefabs[rng.Next(prefabs.Count)];
                 float height = Mathf.Lerp(s.minHeight, s.maxHeight, (float)rng.NextDouble());
                 float yaw = (float)rng.NextDouble() * 360f;
-                PlaceModel(group, prefab, (s.group == "Trees" ? "Background Tree" : s.group.TrimEnd('s')) + " " + (placed + 1), x, z, height, yaw);
+                var placedModel = PlaceModel(group, prefab, (s.group == "Trees" ? "Background Tree" : s.group.TrimEnd('s')) + " " + (placed + 1), x, z, height, yaw);
+                if (s.group != "Grass") WorldKit.Label(placedModel, s.group.TrimEnd('s').ToLowerInvariant()); // grass is ground cover, never listed
 
                 taken.Add(new Vector3(x, z, s.spacing));
                 placed++;
@@ -180,6 +182,7 @@ public static class PlainGenerator
         {
             float px = Ponds[i].x, pz = Ponds[i].y, r = Ponds[i].z;
             var pond = WorldKit.Group("Pond " + (i + 1), group);
+            WorldKit.Label(pond.gameObject, "pond"); // water, stones and lily pads all read as the pond
 
             // A cylinder primitive is 2 m tall at scale 1, so scale.y = thickness / 2.
             var disc = WorldKit.Prim(PrimitiveType.Cylinder, "Water", null,
@@ -277,6 +280,7 @@ public static class PlainGenerator
         tree.SetParent(root, false);
         tree.localPosition = position;
         if (TreeTag != null) tree.gameObject.tag = TreeTag; // tag the root too, so trunk + canopy read as one object
+        WorldKit.Label(tree.gameObject, "tree");
 
         var trunk = WorldKit.Mat("Trunk");
         var leaves = WorldKit.Mat("Leaves");

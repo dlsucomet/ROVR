@@ -144,7 +144,7 @@ namespace ROVR
                 if (step.HasCondition)
                 {
                     // Sense-made conditional (6.3.4): ease off and stop stopGap short of the target.
-                    float gap = GapToTag(dir, step.condition, stopGap + rampLength + speed * Time.deltaTime + 0.1f);
+                    float gap = GapToTarget(dir, step.condition, stopGap + rampLength + speed * Time.deltaTime + 0.1f);
                     if (gap <= stopGap) yield break;
                     if (gap < stopGap + rampLength)
                         thisSpeed = Mathf.Max(minCreepSpeed, speed * (gap - stopGap) / rampLength);
@@ -175,10 +175,11 @@ namespace ROVR
             }
         }
 
-        // Distance the body can still travel along `dir` before touching an object tagged `tag`, or
-        // infinity if something solid (or nothing) is in the way first. Measured from the body's
-        // surface, so it doesn't depend on the avatar's radius.
-        float GapToTag(Vector3 dir, string tag, float castDistance)
+        // Distance the body can still travel along `dir` before touching the target (anything with that
+        // name, e.g. "tree", or one particular object, e.g. "tree-3"), or infinity if something solid (or
+        // nothing) is in the way first. Measured from the body's surface, so it doesn't depend on the
+        // avatar's radius.
+        float GapToTarget(Vector3 dir, string target, float castDistance)
         {
             Vector3 c = transform.TransformPoint(controller.center);
             float half = Mathf.Max(controller.height * 0.5f, controller.radius) - controller.radius;
@@ -191,7 +192,7 @@ namespace ROVR
             foreach (var hit in hits)
             {
                 if (hit.collider.transform.IsChildOf(transform)) continue; // ourselves
-                if (hit.collider.CompareTag(tag)) return hit.distance;
+                if (grounding != null ? grounding.IsTarget(hit.collider, target) : hit.collider.CompareTag(target)) return hit.distance;
                 if (!hit.collider.isTrigger) return float.PositiveInfinity; // something solid in front of the target
             }
             return float.PositiveInfinity;

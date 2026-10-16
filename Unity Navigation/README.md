@@ -17,9 +17,10 @@ microphone -> SpeechSegmenter -> Whisper (English) -> VRControlPanel -> VoiceCom
             finished sentence (1.5 s of silence): cleaned, de-duplicated, shown as subtitles, then:
 utterance
   -> InterruptModule        "stop" / "wait, I mean left": halts NOW, bypassing the LLM
-  -> FOVMetadataGrounding   raycast matrix over the whole view -> what the user can see
+  -> FOVMetadataGrounding   rays through exactly what's on screen -> every visible object, by name
   -> Ollama (Gemma 3n)      + previous command + pending question -> schema-constrained JSON
-  -> engine checks          closed-world validation, "a bit" -> metres, clarify or execute
+  -> engine checks          the user's word -> an object in view (couch -> sofa), closed-world
+                            validation, "a bit" -> metres, clarify or execute
   -> NavigationController   CharacterController movement, reports how it ended
 ```
 
@@ -29,7 +30,9 @@ utterance
 |---|---|
 | `NavigationCommand.cs` | Command schema (Action / Direction / Amount+Magnitude / Condition), the JSON schema sent to Ollama, and outcomes. Unusable model output becomes a clarification, never a silent no-op. |
 | `OllamaClient.cs` | HTTP client for a local Ollama server. Keeps the model loaded, warms it up at start, times each request (`LastLatencySeconds`). |
-| `FOVMetadataGrounding.cs` | Raycast matrix (21×13 over 100°×80°). Sees through door triggers, is blocked by solids, keeps each object separate, and only reports tags in `groundedTags`. |
+| `FOVMetadataGrounding.cs` | What the user can see: a 40×24 grid of rays through the camera's actual view, out to its far clip plane, plus a line-of-sight check on every labelled object so small or far ones aren't missed. Sees through door triggers, is blocked by solids, gives each object a session-long id ("tree-3"), and merges walls into one nearest entry. |
+| `SceneLabel.cs` | Names an object for the scan ("sofa", "rock", "tree"). The world generators add these. |
+| `ObjectVocabulary.cs` | Maps the word the user said onto scan names: couch → sofa, refrigerator → fridge, chair → chair / armchair / stool, table → any kind of table. Add words here. |
 | `InterruptModule.cs` | Halt detection, by fixed keywords (never the LLM). Only a *leading* halt word counts; only an explicit correction after it is kept. |
 | `MovementHabits.cs` | How far "a bit" is: starts at 0.5 m, adapts to the user, resets per participant. |
 | `NavigationController.cs` | Movement: fixed speed, smooth stop at a target, instant 90° snap-turns about the head, "turn until you see X", blocked detection. |
@@ -73,10 +76,10 @@ Add more in `HaltLeads` in `InterruptModule.cs`. A halt followed by a correction
    ollama serve
    ```
 4. Open `Assets/main.unity` and press Play. Nothing to add by hand: `VRControlPanel` adds `FOVMetadataGrounding`, `NavigationController`, `OllamaClient` and `SemanticIntentResolver` to `PlayerBody`, where they find each other and the headset camera (`Camera.main`).
-   To change their settings (e.g. the Ollama model or `groundedTags`), add them to `PlayerBody` yourself in that order; the panel uses the ones already there.
+   To change their settings (e.g. the Ollama model or `maxObjects`), add them to `PlayerBody` yourself in that order; the panel uses the ones already there.
 5. Press **Unmute** on the panel and speak, e.g. `move forward 5 meters`, `move forward until you reach the door`, `a bit more`, `turn around until you see the tree`, `stop`.
 
-The tags the LLM can see are set by `groundedTags` on `FOVMetadataGrounding`, by default **Wall, Door, Chair, Tree**. Furniture and Goal are deliberately left out (Thesis 7.1.2: the House's metadata is doors, walls and chairs; the maze has no semantic objects). Add a tag to that list to expose it.
+**What the LLM is told about** is everything on screen that has a name: every object with a `SceneLabel` (furniture by its everyday name, plants, statues, rocks, flowers, ponds, every tree, the Maze exit), plus objects tagged Wall, Door, Chair or Tree. Floors, ceilings, grass tufts and lily pads have no name and are never listed. To hide or rename something, edit or remove its `SceneLabel`. The 30 nearest objects are sent (`maxObjects`). *This goes beyond Thesis 7.1.2, which limits the metadata to doors, walls and chairs (House), walls (Maze) and the tree (Plain); the thesis text needs to match.*
 
 **Typing instead of speaking:** add all four components above plus `ROVRDebugConsole` to `PlayerBody`, and set the console's `resolver` field.
 
@@ -85,6 +88,7 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 ## Behaviour worth knowing
 
 - **Closed world, enforced by the engine.** A move may only target something in the current view. If the model returns a target that isn't (or isn't a known object type), the engine replaces it with a clarification question. The one exception is `turn ... until you see X` — that is how X gets found.
+- **The engine, not the LLM, decides which object is meant.** The LLM writes the object in the user's own word ("couch"); the engine maps it onto what's in view (`ObjectVocabulary`). Given the full list of visible objects, `gemma3n:e4b` was seen to swap one kind for another ("tree" became a listed plant), so the words the user actually said always win, and a "go to the X" that the model left without a target gets X.
 - **One command of memory.** The previous command, how it ended (completed / halted / blocked), and any question still waiting for an answer go back to the model, so "a bit more" and "the other way" work. Object knowledge never comes from that memory, only from the current view. *This relaxes the strict statelessness in Thesis 5.5.4 by exactly one command — the thesis text should say so.*
 - **"A bit".** The model only labels a move `small`; the engine converts it. Repeating a nudge in the same direction soon after grows it (×1.15), reversing right after shrinks it (×0.85), bounded to 0.2–2 m.
 - **Halts always win.** A halt cancels any request still waiting on the LLM, so a late reply can't restart movement. A newer utterance also supersedes an older one that hasn't been answered yet. "Wait, I mean left" halts immediately, then runs "left"; "stop moving" or "wait a bit" never restart anything.
