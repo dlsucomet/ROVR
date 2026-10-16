@@ -11,9 +11,10 @@ The scripts live in [`Assets/ROVR/`](../Assets/ROVR) and are part of `Assets/mai
 ## How a command flows
 
 ```
-speech -> whisper.unity (English) -> VRControlPanel -> VoiceCommandRouter
-            sentence in progress (every 0.5 s): a leading halt word ("stop", "ops") halts right away
-            finished sentence: cleaned, de-duplicated, shown as subtitles, then:
+microphone -> SpeechSegmenter -> Whisper (English) -> VRControlPanel -> VoiceCommandRouter
+            sentence so far (every 0.5 s, and at each short pause): live caption; a leading
+                halt word ("stop", "ops") halts right away
+            finished sentence (1.5 s of silence): cleaned, de-duplicated, shown as subtitles, then:
 utterance
   -> InterruptModule        "stop" / "wait, I mean left": halts NOW, bypassing the LLM
   -> FOVMetadataGrounding   raycast matrix over the whole view -> what the user can see
@@ -33,10 +34,11 @@ utterance
 | `MovementHabits.cs` | How far "a bit" is: starts at 0.5 m, adapts to the user, resets per participant. |
 | `NavigationController.cs` | Movement: fixed speed, smooth stop at a target, instant 90° snap-turns about the head, "turn until you see X", blocked detection. |
 | `SemanticIntentResolver.cs` | Orchestrates all of it and enforces the rules below in code. |
+| `SpeechSegmenter.cs` | Splits microphone audio into sentences. A sentence ends only after 1.5 s of silence, so pausing mid-sentence doesn't cut it off. Hands out the sentence so far every 0.5 s and at each short pause, for early halts. Tells voice from silence against the room's noise floor. |
 | `VoiceCommandRouter.cs` | Routes speech-to-text output: halts early on a leading halt word in the sentence in progress, drops a sentence reported twice within 1 s, and submits the rest. |
 | `TranscriptFilter.cs` | Strips Whisper's sound annotations ("[BLANK_AUDIO]", "(wind blowing)") and stock hallucinations ("Thank you."). |
 | `ROVRDebugConsole.cs` | Optional on-screen box in the Game view for typing commands instead of speaking. |
-| `../GUI/VRControlPanel.cs` | Vert's panel. Adds the pipeline to `PlayerBody` at Play, feeds it whisper.unity's output, and shows the reply (see below). |
+| `../GUI/VRControlPanel.cs` | Vert's panel. Adds the pipeline to `PlayerBody` at Play, turns microphone audio into text (SpeechSegmenter + Whisper), and shows the reply (see below). |
 
 ## Halt words
 
@@ -53,6 +55,9 @@ Add more in `HaltLeads` in `InterruptModule.cs`. A halt followed by a correction
 
 - **Use LLM** (on by default): finished sentences go to the pipeline. Off: only Vert's fixed phrases (`move forward/backward/left/right`) work, as before.
 - **The microphone starts muted.** Press Unmute to start listening.
+- **Dead Air Sec** (1.5 by default): the silence that ends a sentence. Pauses shorter than this stay in the same sentence. Halt words don't wait for it.
+- **Live captions:** while you speak, the subtitles show the sentence so far, ending in "...".
+- **Log Speech:** prints everything Whisper hears to the Console, including the sentence so far. Useful for checking a microphone.
 - **Output colours:** green = understood and moving ("Moving forward 5 m", "Stopped"), yellow = needs you (a question, or "Something is in the way."), red = didn't work (Ollama not running, a timeout).
 - **Switching worlds** stops the current move first.
 
@@ -108,13 +113,14 @@ LLM round trip: **median 0.46 s, max 0.58 s** over 17 commands on an RTX 5070.
 
 **Speech model:** the scene uses whisper.unity's `ggml-base.bin` with language `en`. On 96 recorded test commands it got 94 exactly right (the English-only `ggml-base.en.bin` got 93), at about 0.55 s each, so it was kept.
 
-**Start Ollama before the session.** Right after `ollama serve` starts, loading the model took 24 s and the first two commands timed out (30 s). Once loaded, it stays loaded for 30 minutes after the last command.
+**Start Ollama before the session.** Right after Ollama starts, loading the model took 24 to 73 s, and the first full-size commands were very slow (one timed out at 30 s). At Play, `OllamaClient` now warms up with one throwaway command in the real format, so that cost is paid before the first spoken command. Once loaded, the model stays loaded for 30 minutes after the last command.
 
 **Use `127.0.0.1`, not `localhost`, for the Ollama endpoint.** On Windows `localhost` tries IPv6 first and adds about 2 s to every request; the client's default and an automatic rewrite of `localhost` already handle this.
 
 ## Known gaps / next steps
 
-- **Voice hasn't been tried with a real microphone or headset.** How early "stop" acts depends on whisper.unity's timing on the real machine: the sentence in progress is re-transcribed every `stepSec` (0.5 s on the scene's WhisperManager; whisper.unity's default of 3 s is too slow to catch "stop"). Lower is faster but costs more GPU, which VR rendering also needs.
+- **Voice hasn't been tried with a real headset microphone.** Tested by playing recorded speech into the panel: a 0.8 s pause stayed in one sentence, and "ops" / "stop" stopped the player within 0.15 s of the word ending. A real room and microphone may need **Dead Air Sec** tuned; turn on **Log Speech** to see what Whisper hears.
+- **Whisper ignores audio under 1 s,** and a lone "stop" is shorter than that, so the panel pads short audio with silence before transcribing it.
 - **Ollama can't take audio** for `gemma3n:e4b` ("model does not support multimodal requests"), so speech is transcribed separately, by whisper.unity, before the LLM sees it. This differs from Thesis 6.3.1.
 - **If the LLM answers slower than you speak**, a newer sentence replaces an older unanswered one, so a very fast string of repeats can collapse into fewer moves.
 - **House:** a potted plant ("Hall Plant 4") stands straight ahead of the House's Start, against the north wall. Plants are `Furniture`, which the LLM can't see, so "move forward until you hit a wall" from Start ends with "Something is in the way." at the plant.

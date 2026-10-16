@@ -11,7 +11,7 @@ LLM-driven voice navigation in VR. A thesis prototype comparing joystick movemen
 
 Voice navigation runs through the LLM in `Assets/main.unity`:
 
-- **Speech:** [whisper.unity](https://github.com/Macoron/whisper.unity) transcribes English speech.
+- **Speech:** [whisper.unity](https://github.com/Macoron/whisper.unity) transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine.
 - **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons and a mic mute button. **The mic starts muted.**
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
 - **Halt words** (`stop`, `wait`, and Filipino `ops`) are fixed keywords. They stop the player before the sentence is finished, without the LLM.

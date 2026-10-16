@@ -48,16 +48,20 @@ namespace ROVR
             StartCoroutine(RequestCoroutine(systemPrompt, userPrompt, onSuccess, onError));
         }
 
-        // Loads the model into memory now (an empty message list does exactly that in Ollama), so the
-        // first spoken command isn't the one that pays the multi-second load.
-        public void WarmUp()
+        // Loads the model and runs one throwaway command in exactly the shape of a real one (same system
+        // prompt and answer format), so the first spoken command isn't the one that pays for it. Right
+        // after Ollama starts, that first full-size request was seen to take over 30 s; later ones ~0.5 s.
+        // Without a system prompt it only loads the model (an empty message list does that in Ollama).
+        public void WarmUp(string systemPrompt = null)
         {
-            StartCoroutine(WarmUpCoroutine());
+            StartCoroutine(WarmUpCoroutine(systemPrompt));
         }
 
-        IEnumerator WarmUpCoroutine()
+        IEnumerator WarmUpCoroutine(string systemPrompt)
         {
-            string body = "{\"model\":\"" + JsonEscape(model) + "\",\"messages\":[],\"keep_alive\":\"" + KeepAlive + "\"}";
+            string body = systemPrompt != null
+                ? BuildRequestJson(systemPrompt, "Visible objects: []\nPrevious command: none\nCommand: \"stop\"")
+                : "{\"model\":\"" + JsonEscape(model) + "\",\"messages\":[],\"keep_alive\":\"" + KeepAlive + "\"}";
             var request = new UnityWebRequest(Endpoint, "POST");
             try
             {

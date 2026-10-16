@@ -11,6 +11,13 @@ public class VRControlPanel : MonoBehaviour
     public WhisperManager whisperManager;
     public MicrophoneRecord microphoneRecord;
 
+    [Header("Speech")]
+    [Tooltip("Seconds of silence that end a sentence. Shorter pauses stay in the same sentence. " +
+             "Halt words (stop, ops) act before this, while the sentence is still being spoken.")]
+    public float deadAirSec = 1.5f;
+    [Tooltip("Log every transcription to the Console: the sentence so far while speaking, and the finished sentence.")]
+    public bool logSpeech;
+
     [Header("Voice Commands")]
     [Tooltip("On: every sentence goes to the LLM pipeline (Ollama must be running), which moves the player. " +
              "Off: only the fixed phrases \"move forward/backward/left/right\" work.")]
@@ -38,7 +45,12 @@ public class VRControlPanel : MonoBehaviour
     private bool _isMicMuted = true; // Default is muted/off until pressed
     private Text micButtonText;
 
-    private WhisperStream _stream;
+    // Speech: microphone audio -> sentences (SpeechSegmenter) -> text (Whisper), one transcription at a time
+    private SpeechSegmenter _segmenter;
+    private float[] _pendingPartial, _pendingSentence; // newest audio waiting for Whisper
+    private bool _transcribing;
+    private int _speechGeneration; // bumped on mute/unmute so results from before are dropped
+
     private CharacterController _controller;
     private Vector3 _moveDirection = Vector3.zero;
     private float _moveTimer = 0f;
@@ -49,7 +61,7 @@ public class VRControlPanel : MonoBehaviour
     private SemanticIntentResolver _resolver;
     private VoiceCommandRouter _router;
 
-    private async void Start()
+    private void Start()
     {
         if (playerBody == null) playerBody = transform;
         _controller = playerBody.GetComponent<CharacterController>();
@@ -74,21 +86,17 @@ public class VRControlPanel : MonoBehaviour
             micMuteButton.onClick.AddListener(ToggleMicMute);
         }
 
-        // Initialize Whisper Stream
+        // Initialize speech input (the Whisper model loads by itself in the background)
         if (whisperManager != null && microphoneRecord != null)
         {
-            // The stream shuts down for good whenever the mic stops, so the mic must run until muted.
+            // Keep recording until muted, instead of stopping after the 60 s buffer or a silence.
             microphoneRecord.loop = true;
             microphoneRecord.vadStop = false;
             microphoneRecord.echo = false;
-            // Only transcribe detected speech (Whisper invents text for silence), one segment per utterance.
-            whisperManager.useVad = true;
-            // A continuous stream would otherwise feed every past transcription back in as the prompt.
-            whisperManager.updatePrompt = false;
-
-            _stream = await whisperManager.CreateStream(microphoneRecord);
-            _stream.OnSegmentUpdated += OnSegmentUpdated;
-            _stream.OnSegmentFinished += OnSegmentFinished;
+            // SpeechSegmenter decides where sentences end, from small pieces of audio for close timing.
+            microphoneRecord.useVad = false;
+            microphoneRecord.chunksLengthSec = 0.1f;
+            microphoneRecord.OnChunkReady += OnMicChunk;
         }
 
         // Ensure mic starts disabled based on requirements
@@ -147,14 +155,17 @@ public class VRControlPanel : MonoBehaviour
 
     private void ToggleMicMute()
     {
-        if (microphoneRecord == null || _stream == null) return;
+        if (microphoneRecord == null || whisperManager == null) return;
 
         _isMicMuted = !_isMicMuted;
+        // A sentence cut off by muting must not carry over, and late transcriptions are dropped.
+        _speechGeneration++;
+        _pendingPartial = _pendingSentence = null;
+        _segmenter?.Reset();
 
         if (_isMicMuted)
         {
             // Muted state
-            _stream.StopStream();
             if (microphoneRecord.IsRecording) microphoneRecord.StopRecord();
             microphoneRecord.enabled = false;
 
@@ -165,32 +176,105 @@ public class VRControlPanel : MonoBehaviour
         else
         {
             // Unmuted state (Activates speech-to-text loop)
-            // A sentence cut off by muting must not carry over into the next one.
             if (_resolver != null) _router = NewRouter();
             microphoneRecord.enabled = true;
             microphoneRecord.StartRecord();
-            _stream.StartStream();
 
             if (micButtonText != null) micButtonText.text = "Mute";
             Debug.Log("<color=green><b>[Mic Unmuted]</b> Listening continuously...</color>");
         }
     }
 
-    // The sentence in progress, re-transcribed every Whisper step (WhisperManager's stepSec, 0.5 s).
-    // Only checked for a leading halt word ("stop", "wait", "ops"), so the player stops before the
-    // sentence is finished.
-    private void OnSegmentUpdated(WhisperResult result)
+    // ---------- Speech input ----------
+
+    private void OnMicChunk(AudioChunk chunk)
     {
-        if (_isMicMuted || !useLLM || _router == null || result == null) return;
-        _router.OnPartial(result.Result);
+        if (_isMicMuted || chunk.Data == null) return;
+        FeedAudio(ToMono(chunk.Data, chunk.Channels), chunk.Frequency);
     }
 
-    private void OnSegmentFinished(WhisperResult result)
+    // Mono microphone audio. Public so a recording can be played in for testing without a microphone.
+    public void FeedAudio(float[] samples, int frequency)
     {
-        if (_isMicMuted || result == null) return;
+        if (_segmenter == null || _segmenter.SampleRate != frequency)
+        {
+            _segmenter = new SpeechSegmenter(frequency);
+            _segmenter.OnPartial += audio => QueueTranscription(audio, false);
+            _segmenter.OnSentence += audio => QueueTranscription(audio, true);
+        }
+        _segmenter.DeadAirSec = deadAirSec;
+        _segmenter.AddSamples(samples);
+    }
 
+    // Only the newest partial is worth transcribing; a finished sentence always is, and goes first.
+    private void QueueTranscription(float[] audio, bool isSentence)
+    {
+        if (isSentence) { _pendingSentence = audio; _pendingPartial = null; }
+        else if (_pendingSentence == null) _pendingPartial = audio;
+
+        if (!_transcribing) TranscribeQueued();
+    }
+
+    private async void TranscribeQueued()
+    {
+        _transcribing = true;
+        while (_pendingSentence != null || _pendingPartial != null)
+        {
+            bool isSentence = _pendingSentence != null;
+            float[] audio = isSentence ? _pendingSentence : _pendingPartial;
+            if (isSentence) _pendingSentence = null; else _pendingPartial = null;
+            int generation = _speechGeneration;
+
+            WhisperResult result = await whisperManager.GetTextAsync(PadForWhisper(audio, _segmenter.SampleRate), _segmenter.SampleRate, 1);
+            if (this == null) return; // destroyed while Whisper was working
+            if (result == null || generation != _speechGeneration || _isMicMuted) continue;
+
+            if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + (audio.Length / (float)_segmenter.SampleRate).ToString("F1") + " s): \"" + result.Result + "\"");
+            if (isSentence) OnSentenceHeard(result.Result);
+            else OnPartialHeard(result.Result);
+        }
+        _transcribing = false;
+    }
+
+    // Whisper returns nothing for audio under 1 s, and a lone "stop" or "ops" is shorter than that,
+    // so short audio gets silence added after it.
+    private static float[] PadForWhisper(float[] audio, int sampleRate)
+    {
+        int minimum = (int)(sampleRate * 1.5f);
+        if (audio.Length >= minimum) return audio;
+        var padded = new float[minimum];
+        System.Array.Copy(audio, padded, audio.Length);
+        return padded;
+    }
+
+    private static float[] ToMono(float[] data, int channels)
+    {
+        if (channels <= 1) return data;
+        var mono = new float[data.Length / channels];
+        for (int i = 0; i < mono.Length; i++)
+        {
+            float sum = 0f;
+            for (int c = 0; c < channels; c++) sum += data[i * channels + c];
+            mono[i] = sum / channels;
+        }
+        return mono;
+    }
+
+    // The sentence so far, while it's still being spoken: shown as a live caption, and checked for a
+    // leading halt word ("stop", "wait", "ops") so the player stops before the sentence is finished.
+    private void OnPartialHeard(string text)
+    {
+        string soFar = TranscriptFilter.Clean(text);
+        if (soFar != null && subtitlesText != null) subtitlesText.text = soFar.ToLower() + " ...";
+
+        if (useLLM && _router != null) _router.OnPartial(text);
+    }
+
+    // A finished sentence (it ended with deadAirSec of silence).
+    private void OnSentenceHeard(string text)
+    {
         // Drops Whisper's notes for non-speech ("[BLANK_AUDIO]") and the stock phrases it invents from noise ("Thank you.").
-        string spokenText = TranscriptFilter.Clean(result.Result);
+        string spokenText = TranscriptFilter.Clean(text);
         if (spokenText != null)
         {
             spokenText = spokenText.ToLower();
@@ -207,7 +291,7 @@ public class VRControlPanel : MonoBehaviour
         if (useLLM)
         {
             if (_resolver == null) SetUpLLMPipeline(); // switched on during Play
-            _router.OnFinal(result.Result); // also ends the sentence for the early halt check, even if it was noise
+            _router.OnFinal(text); // also ends the sentence for the early halt check, even if it was noise
         }
         else if (spokenText != null)
         {
@@ -404,12 +488,7 @@ public class VRControlPanel : MonoBehaviour
 
     private void OnDisable()
     {
-        if (_stream != null)
-        {
-            _stream.OnSegmentUpdated -= OnSegmentUpdated;
-            _stream.OnSegmentFinished -= OnSegmentFinished;
-            _stream.StopStream();
-        }
+        if (microphoneRecord != null) microphoneRecord.OnChunkReady -= OnMicChunk;
         if (microphoneRecord != null && microphoneRecord.IsRecording)
         {
             microphoneRecord.StopRecord();

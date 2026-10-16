@@ -106,7 +106,7 @@ Command: go to the tree (no Tree in the visible objects list)
 
         void Start()
         {
-            if (ollama != null) ollama.WarmUp();
+            if (ollama != null) ollama.WarmUp(SystemPrompt);
         }
 
         // Call between participants so one person's habits and context never carry into the next trial.
