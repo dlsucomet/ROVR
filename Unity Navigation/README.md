@@ -115,6 +115,16 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 - **Nothing fails silently.** Unusable model output, unknown or unseen objects, blocked moves, and turns that find nothing all produce a message.
 - The step offset is forced to 0 so the avatar can't hop onto props and hover (the worlds are flat and there is no gravity).
 
+## Units and scale
+
+**1 Unity unit = 1 metre**, and every distance in the system is in metres. This is Unity's physics convention and the headset's: OpenXR reports head position in metres, so 1 m of real head movement moves the view 1 m. Measured in `main.unity`:
+
+- **The rig is unscaled:** `PlayerBody`, the XR Origin and the head camera all have scale 1. The XR Origin uses the headset's default (floor-level) tracking on the Quest, so the eye height is the participant's own. Without a headset the camera sits at the rig's fallback 1.36 m.
+- **Movement is exact:** "move forward 5 / 10 / 1 meters" moved 5.00 / 10.00 / 1.00 m. Speeds measured 1.00 / 2.00 / 3.00 m/s (Slow / Normal / Fast). Moves toward an object stop 0.50 m short of it. "A bit" starts at 0.5 m.
+- **The body** is a `CharacterController` capsule 2 m tall with a 0.5 m radius, so it needs openings wider than 1 m.
+- **The worlds are real-size:** House 24 × 20 m with 3.0 m walls and doorways 2.0 m wide and 2.2 m high; Maze 12 × 9 cells of 4 m (48 × 36 m); Plain 100 × 100 m with an 8.0 m landmark tree.
+- **Furniture keeps real proportions:** sofa 1.96 m wide, fridge 1.84 m tall, bed 1.9 × 2.25 m, dining chairs 0.94 m tall. Two Kenney models run large or small for the real thing: the toilets are 1.6 m tall (the model includes a high cistern) and the dining table is 0.65 m tall (0.75 m is usual).
+
 ## Tested against the real model
 
 **Voice through the control panel:** tested in headless Unity with the real panel, the real pipeline, the real model and the three generated worlds; only whisper.unity's output was simulated (no microphone on the test machine). All 46 checks passed, including:
