@@ -41,6 +41,9 @@ namespace ROVR
 
         // Seconds the last successful request took, for the thesis's latency testing.
         public float LastLatencySeconds { get; private set; }
+
+        // Prints each command's prompt (what the user said and the objects in view) and the model's reply.
+        public bool LogExchanges { get; set; }
         public event Action<float> OnLatency;
 
         public virtual void RequestCommand(string systemPrompt, string userPrompt, Action<NavigationCommand> onSuccess, Action<string> onError)
@@ -132,6 +135,8 @@ namespace ROVR
                     yield break;
                 }
 
+                if (LogExchanges)
+                    Debug.Log("[LLM] " + LastLatencySeconds.ToString("F2") + " s\n" + userPrompt + "\n-> " + chatResponse.message.content);
                 OnLatency?.Invoke(LastLatencySeconds);
                 onSuccess?.Invoke(NavigationCommand.FromRaw(raw));
             }

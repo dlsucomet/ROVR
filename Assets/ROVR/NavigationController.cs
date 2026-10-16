@@ -137,9 +137,20 @@ namespace ROVR
             float travelled = 0f;
             int blockedFrames = 0;
 
+            // Heading for one particular object ("plant-4"): walk straight toward it, even if it's a
+            // little to one side of where the user faces. The view doesn't turn.
+            Transform goal = step.HasCondition && grounding != null && (step.direction == DirectionType.Forward
+                || step.direction == DirectionType.Left || step.direction == DirectionType.Right)
+                ? grounding.ObjectWithId(step.condition) : null;
+
             while (travelled < target)
             {
                 float thisSpeed = speed;
+                if (goal != null)
+                {
+                    Vector3 to = Vector3.ProjectOnPlane(FOVMetadataGrounding.CenterOf(goal) - transform.position, Vector3.up);
+                    if (to.sqrMagnitude > 0.01f) dir = to.normalized;
+                }
 
                 if (step.HasCondition)
                 {

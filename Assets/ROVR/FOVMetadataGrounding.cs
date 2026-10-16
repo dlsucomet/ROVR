@@ -207,6 +207,23 @@ namespace ROVR
             return nameOrId;
         }
 
+        // The object with this id, or null.
+        public Transform ObjectWithId(string id)
+        {
+            return id != null && objectWithId.TryGetValue(id.ToLowerInvariant(), out Transform t) ? t : null;
+        }
+
+        // The middle of an object as seen: its label's bounds, else its renderers', else its position.
+        public static Vector3 CenterOf(Transform t)
+        {
+            var label = t.GetComponent<SceneLabel>();
+            if (label != null) return label.Bounds.center;
+            var r = t.GetComponentInChildren<Renderer>();
+            if (r != null) return r.bounds.center;
+            var c = t.GetComponentInChildren<Collider>();
+            return c != null ? c.bounds.center : t.position;
+        }
+
         public bool IsId(string nameOrId)
         {
             return nameOrId != null && objectWithId.ContainsKey(nameOrId.ToLowerInvariant());

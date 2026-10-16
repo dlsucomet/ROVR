@@ -17,6 +17,8 @@ public class VRControlPanel : MonoBehaviour
     public float deadAirSec = 1.5f;
     [Tooltip("Log every transcription to the Console: the sentence so far while speaking, and the finished sentence.")]
     public bool logSpeech;
+    [Tooltip("Log each command sent to the LLM (what was heard and the objects in view) and its reply.")]
+    public bool logLLM;
 
     [Header("Voice Commands")]
     [Tooltip("On: every sentence goes to the LLM pipeline (Ollama must be running), which moves the player. " +
@@ -60,6 +62,7 @@ public class VRControlPanel : MonoBehaviour
     // LLM pipeline (Assets/ROVR), on Player Body
     private SemanticIntentResolver _resolver;
     private FOVMetadataGrounding _grounding;
+    private OllamaClient _ollama;
     private VoiceCommandRouter _router;
 
     private void Start()
@@ -111,6 +114,8 @@ public class VRControlPanel : MonoBehaviour
 
     private void Update()
     {
+        if (_ollama != null) _ollama.LogExchanges = logLLM;
+
         // Handle Command Cooldown Timer
         if (_commandCooldown > 0f)
         {
@@ -311,8 +316,9 @@ public class VRControlPanel : MonoBehaviour
         // Order matters: each part looks for the ones before it when it is added.
         _grounding = GetOrAdd<FOVMetadataGrounding>();
         GetOrAdd<NavigationController>();
-        GetOrAdd<OllamaClient>();
+        _ollama = GetOrAdd<OllamaClient>();
         _resolver = GetOrAdd<SemanticIntentResolver>();
+        GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
 
         _resolver.OnCommandResolved += HandleCommandResolved;
         _resolver.OnClarificationNeeded += HandleQuestion;

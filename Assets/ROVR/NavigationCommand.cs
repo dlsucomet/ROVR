@@ -37,6 +37,8 @@ namespace ROVR
     {
         public RawNavigationStep[] steps;
         public string clarification;
+        public string which;      // which of several matching objects: left | right | middle | nearest | farthest | looking
+        public string which_near; // or the one next to this object ("the tree by the pond" = pond)
     }
 
     public class NavigationStep
@@ -45,7 +47,7 @@ namespace ROVR
         public DirectionType direction;
         public AmountType amount;
         public float magnitude;   // meters for Move, degrees for Turn; 0 = not specified
-        public string condition;  // object type to move to / turn until seen (e.g. "Wall"); empty = none
+        public string condition;  // object to move to / turn until seen: a name ("tree") or one object's id ("tree-3"); empty = none
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;
@@ -72,9 +74,11 @@ namespace ROVR
         ""required"": [""action"", ""direction"", ""amount"", ""magnitude"", ""condition""]
       }
     },
-    ""clarification"": { ""type"": ""string"" }
+    ""clarification"": { ""type"": ""string"" },
+    ""which"": { ""type"": ""string"", ""enum"": ["""", ""left"", ""right"", ""middle"", ""nearest"", ""farthest"", ""looking""] },
+    ""which_near"": { ""type"": ""string"" }
   },
-  ""required"": [""steps"", ""clarification""]
+  ""required"": [""steps"", ""clarification"", ""which"", ""which_near""]
 }";
     }
 
@@ -84,8 +88,13 @@ namespace ROVR
 
         public NavigationStep[] steps = Array.Empty<NavigationStep>();
         public string clarificationPrompt;
+        public string which = string.Empty;     // how the user singled out one of several objects, if they did
+        public string whichNear = string.Empty; // "the tree by the pond": pond
 
         public bool IsClarification => !string.IsNullOrEmpty(clarificationPrompt);
+        public bool HasChoice => which.Length > 0 || whichNear.Length > 0;
+        // Only an answer to "which one?" ("the left one", "that one"), with nothing to do yet.
+        public bool IsChoiceOnly => steps.Length == 0 && !IsClarification && HasChoice;
 
         public static NavigationCommand Clarification(string prompt)
         {
@@ -97,6 +106,10 @@ namespace ROVR
         public static NavigationCommand FromRaw(RawNavigationCommand raw)
         {
             if (raw == null) return Clarification(DidntCatch);
+
+            string which = (raw.which ?? string.Empty).Trim().ToLowerInvariant();
+            string whichNear = (raw.which_near ?? string.Empty).Trim();
+            if (IsNothing(whichNear)) whichNear = string.Empty;
 
             if (!string.IsNullOrEmpty(raw.clarification))
                 return Clarification(raw.clarification);
@@ -137,8 +150,8 @@ namespace ROVR
                 }
             }
 
-            if (steps.Count == 0) return Clarification(DidntCatch);
-            return new NavigationCommand { steps = steps.ToArray() };
+            if (steps.Count == 0 && which.Length == 0 && whichNear.Length == 0) return Clarification(DidntCatch);
+            return new NavigationCommand { steps = steps.ToArray(), which = which, whichNear = whichNear };
         }
 
         // Compact form handed back to the LLM as "the previous command" for follow-ups.

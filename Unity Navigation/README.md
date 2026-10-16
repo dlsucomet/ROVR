@@ -32,6 +32,7 @@ utterance
 | `OllamaClient.cs` | HTTP client for a local Ollama server. Keeps the model loaded, warms it up at start, times each request (`LastLatencySeconds`). |
 | `FOVMetadataGrounding.cs` | What the user can see: a 40×24 grid of rays through the camera's actual view, out to its far clip plane, plus a line-of-sight check on every labelled object so small or far ones aren't missed. Sees through door triggers, is blocked by solids, gives each object a session-long id ("tree-3"), and merges walls into one nearest entry. |
 | `SceneLabel.cs` | Names an object for the scan ("sofa", "rock", "tree"). The world generators add these. |
+| `Highlighter.cs` | Makes the options glow while the system asks "which one?"; the one being looked at glows brighter. The glow is `Assets/Resources/ROVR/Highlight.shader`. |
 | `ObjectVocabulary.cs` | Maps the word the user said onto scan names: couch → sofa, refrigerator → fridge, chair → chair / armchair / stool, table → any kind of table. Add words here. |
 | `InterruptModule.cs` | Halt detection, by fixed keywords (never the LLM). Only a *leading* halt word counts; only an explicit correction after it is kept. |
 | `MovementHabits.cs` | How far "a bit" is: starts at 0.5 m, adapts to the user, resets per participant. |
@@ -61,6 +62,7 @@ Add more in `HaltLeads` in `InterruptModule.cs`. A halt followed by a correction
 - **Dead Air Sec** (1.5 by default): the silence that ends a sentence. Pauses shorter than this stay in the same sentence. Halt words don't wait for it.
 - **Live captions:** while you speak, the subtitles show the sentence so far, ending in "...".
 - **Log Speech:** prints everything Whisper hears to the Console, including the sentence so far. Useful for checking a microphone.
+- **Log LLM:** prints each command sent to the LLM (what was heard, and the objects in view) and the model's reply.
 - **Output colours:** green = understood and moving ("Moving forward 5 m", "Stopped"), yellow = needs you (a question, or "Something is in the way."), red = didn't work (Ollama not running, a timeout).
 - **Switching worlds** stops the current move first.
 
@@ -88,6 +90,8 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 ## Behaviour worth knowing
 
 - **Closed world, enforced by the engine.** A move may only target something in the current view. If the model returns a target that isn't (or isn't a known object type), the engine replaces it with a clarification question. The one exception is `turn ... until you see X` — that is how X gets found.
+- **Which one.** When several matching objects are in view in the direction asked, the system asks ("Which plant? Look at the one you mean and say "that one", or tell me the one on your left, the one ahead or the one on your right.") and the options glow. The user answers by **looking at one and saying "that one"**, or in words: "the left one", "the closer one", "the one next to the stool". Those answers are read by the engine, not the LLM (instant, and the model was seen to misread them). The choice can also be part of the command: "go to the left plant", "go to that tree" (while looking at it), "the plant by the pond". The pick is remembered for a minute, so turning to face it and repeating the command doesn't ask again, and "it" means that object. A pick that's off to the side still asks the user to turn to it first, and only it glows.
+- **Heading for one object.** Once a command targets a particular object, the walk heads straight for it, even if it's a little to one side; the view doesn't turn. There's no path-finding: something in between ends the move with "Something is in the way." "Until you hit a wall" still goes straight ahead.
 - **The engine, not the LLM, decides which object is meant.** The LLM writes the object in the user's own word ("couch"); the engine maps it onto what's in view (`ObjectVocabulary`). Given the full list of visible objects, `gemma3n:e4b` was seen to swap one kind for another ("tree" became a listed plant), so the words the user actually said always win, and a "go to the X" that the model left without a target gets X.
 - **One command of memory.** The previous command, how it ended (completed / halted / blocked), and any question still waiting for an answer go back to the model, so "a bit more" and "the other way" work. Object knowledge never comes from that memory, only from the current view. *This relaxes the strict statelessness in Thesis 5.5.4 by exactly one command — the thesis text should say so.*
 - **"A bit".** The model only labels a move `small`; the engine converts it. Repeating a nudge in the same direction soon after grows it (×1.15), reversing right after shrinks it (×0.85), bounded to 0.2–2 m.
@@ -128,8 +132,7 @@ LLM round trip: **median 0.46 s, max 0.58 s** over 17 commands on an RTX 5070.
 - **Ollama can't take audio** for `gemma3n:e4b` ("model does not support multimodal requests"), so speech is transcribed separately, by whisper.unity, before the LLM sees it. This differs from Thesis 6.3.1.
 - **If the LLM answers slower than you speak**, a newer sentence replaces an older unanswered one, so a very fast string of repeats can collapse into fewer moves.
 - **House:** a potted plant ("Hall Plant 4") stands straight ahead of the House's Start, against the north wall. Plants are `Furniture`, which the LLM can't see, so "move forward until you hit a wall" from Start ends with "Something is in the way." at the plant.
-- **One conversational gap:** after "which chair?", a reply like "the left one" can't aim at that chair (turns are 90° snaps), and the model sometimes turns left instead of asking the user to face it. The engine's message tells users to face the object and repeat the command, which works.
-- **Prompt-driven behaviour is model-dependent.** It was tuned and tested against `gemma3n:e4b` (41 of 42 scripted commands correct; the one miss is the "the left one" case above). Re-run those checks if you change the model or the prompt.
+- **Prompt-driven behaviour is model-dependent.** It was tuned and tested against `gemma3n:e4b`: 24 of 24 scripted commands gave the right final result once the engine's checks were applied (median 0.57 s). On its own, the model often named the wrong object or invented a choice, which is why the engine double-checks both against the user's words. Re-run those checks if you change the model or the prompt.
 - **No controller (joystick) arm yet** for the between-subjects control condition (Section 7.1) — it must move through `CharacterController.Move` with the same step offset, and use the same snap-turn and speed settings.
 - **No Task Completion Time logging** (Section 7.1.3) hooked up yet. `OllamaClient.LastLatencySeconds` covers LLM latency only.
 - Ground-following isn't simulated (no gravity, no stairs) — vertical motion only happens on explicit up/down commands.

@@ -14,7 +14,11 @@
 //     can never restart movement. A newer utterance likewise supersedes an older, unanswered one.
 //   - No silent failures (5.5.6): unusable output, unknown objects, blocked moves and turns that find
 //     nothing all produce a message for the user.
+//   - Which one (5.4.3): when several matching objects are in view, the engine asks and makes them
+//     glow; the user answers by looking at one and saying "that one", or in words ("the left one",
+//     "the one by the pond"). The pick is remembered, so repeating the command later doesn't ask again.
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ROVR
@@ -34,6 +38,7 @@ namespace ROVR
         public event Action<string> OnStatus;   // blocked / not found notices
         public event Action<string> OnError;
         public event Action<NavigationCommand> OnCommandResolved;
+        public event Action<IList<Transform>> OnChoicesChanged; // objects to glow while asking "which one?"; empty = none
 
         public MovementHabits Habits { get; } = new MovementHabits();
         public float LastLatencySeconds => ollama != null ? ollama.LastLatencySeconds : 0f;
@@ -44,6 +49,28 @@ namespace ROVR
         float lastCommandTime;
         string pendingClarification;
         float clarificationTime;
+
+        const float LookDegrees = 15f; // "that one" = the option within this of the middle of the view
+        static readonly Transform[] NoObjects = new Transform[0];
+
+        // Asked "which tree?": the command waiting for the answer, and the options.
+        class PendingChoice
+        {
+            public NavigationCommand command;
+            public NavigationStep step;
+            public string name;
+            public List<string> optionIds;
+            public float time;
+        }
+        PendingChoice pendingChoice;
+        List<Transform> glowNext; // what to glow once the current command has been checked
+
+        // What the user last picked out of several, per name ("plant" -> "plant-4"), so repeating the
+        // command after turning to face it doesn't ask again; the last pick is also what "it" means.
+        readonly Dictionary<string, string> pickedFor = new Dictionary<string, string>();
+        readonly Dictionary<string, float> pickedTime = new Dictionary<string, float>();
+        string lastPickedId;
+        float lastPickTime;
 
         const string SystemPrompt = @"You are the navigation intent parser for ROVR, a voice-driven VR locomotion system. Turn the user's spoken command into JSON that matches the schema. Reply with JSON only, no prose.
 
@@ -61,33 +88,41 @@ VISIBLE OBJECTS is what the user can see right now. Each entry has name, distanc
 
 PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'back' or 'the other way' keeps the same action (a turn stays a turn) with the opposite direction. If the command needs a previous command and it says 'Previous command: none', return no steps and ask what they want to do. Never take object information from the previous command.
 
-CHOOSING. You cannot aim at one of several objects. If the user answers a question by picking one ('the left one'), return no steps and ask them to face it and repeat the command.
+WHICH ONE. When the user singles out one of several objects, set which: left, right, middle, nearest (the closer one), farthest, or looking (that one, this one, that tree: the one they are looking at); or set which_near to the object it is next to ('the tree by the pond' = pond). Otherwise both are empty strings. When you asked the user which one and they only answer that ('the left one', 'that one', 'the one by the pond'), return no steps and set which or which_near.
 
 If you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
 
 EXAMPLES
 Command: move forward 5 meters
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":""""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go forward until you reach the door (a door is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: back up a bit
-{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (previous command was a small move forward)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: left
-{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":""""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: move right half a meter
-{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":""""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (Previous command: none)
-{""steps"":[],""clarification"":""More of what? Tell me which way to move.""}
+{""steps"":[],""clarification"":""More of what? Tell me which way to move."",""which"":"""",""which_near"":""""}
 Command: turn around until you see a chair
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair""}],""clarification"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: turn around until you see the tree (no tree in the visible objects list)
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the couch (a sofa is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch""}],""clarification"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: go to the left plant (two plants are listed)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""plant""}],""clarification"":"""",""which"":""left"",""which_near"":""""}
+Command: go to that tree
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree""}],""clarification"":"""",""which"":""looking"",""which_near"":""""}
+Command: the one next to the pond (Question you asked: Which tree?)
+{""steps"":[],""clarification"":"""",""which"":"""",""which_near"":""pond""}
+Command: the closer one (Question you asked: Which chair?)
+{""steps"":[],""clarification"":"""",""which"":""nearest"",""which_near"":""""}
 Command: go to the lamp (no lamp in the visible objects list)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp""}],""clarification"":""""}";
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
 
         void Awake()
         {
@@ -120,6 +155,10 @@ Command: go to the lamp (no lamp in the visible objects list)
             lastCommand = null;
             lastOutcome = null;
             pendingClarification = null;
+            ClearChoice();
+            pickedFor.Clear();
+            pickedTime.Clear();
+            lastPickedId = null;
         }
 
         // Stops movement now and cancels any request still waiting on the LLM, so a late reply can't
@@ -128,6 +167,7 @@ Command: go to the lamp (no lamp in the visible objects list)
         {
             requestId++;
             controller.Halt();
+            ClearChoice();
         }
 
         public void SubmitUtterance(string utterance)
@@ -140,6 +180,7 @@ Command: go to the lamp (no lamp in the visible objects list)
             {
                 requestId++;      // anything still waiting on the LLM predates this halt and must not run
                 controller.Halt();
+                ClearChoice();
                 if (string.IsNullOrEmpty(interrupt.remainder)) return;
                 utterance = interrupt.remainder; // "wait, I mean left": the correction still goes through
             }
@@ -152,6 +193,16 @@ Command: go to the lamp (no lamp in the visible objects list)
                 pendingClarification = question;
                 clarificationTime = Time.time;
                 OnClarificationNeeded?.Invoke(question);
+                return;
+            }
+
+            // An answer to "which one?" ("that one", "the left one", "the one by the stool") is read
+            // here, not by the LLM: it's a short, fixed set of forms, and the model was seen to turn
+            // "the one next to the stool" into "go to the stool".
+            if (ChoicePending() && TryReadAnswer(utterance, out NavigationCommand answer))
+            {
+                requestId++;
+                ResolveChoice(answer);
                 return;
             }
 
@@ -215,21 +266,35 @@ Command: go to the lamp (no lamp in the visible objects list)
             return sb.ToString();
         }
 
-        void OnResolved(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible, string utterance)
+        void OnResolved(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
-            // Closed World, enforced by the engine rather than trusted to the prompt.
+            KeepSaidChoice(command, utterance);
+            if (command.IsChoiceOnly)
+            {
+                if (ChoicePending()) { ResolveChoice(command); return; }
+                command = NavigationCommand.Clarification("Which one, and what should I do with it?");
+            }
+            else
+            {
+                ClearChoice(); // a new command replaces an unanswered "which one?"
+            }
+            Proceed(command, visible, utterance);
+        }
+
+        // Closed World checks (enforced by the engine rather than trusted to the prompt), then either
+        // ask (6.2.5: pause and ask rather than guess or fail silently, 5.5.6) or execute.
+        void Proceed(NavigationCommand command, List<GroundedObject> visible, string utterance)
+        {
+            glowNext = null;
             string problem = command.IsClarification ? null : FindGroundingProblem(command, visible, utterance);
             if (problem != null) command = NavigationCommand.Clarification(problem);
+            OnChoicesChanged?.Invoke(glowNext != null ? (IList<Transform>)glowNext : NoObjects);
 
             OnCommandResolved?.Invoke(command);
 
             if (command.IsClarification)
             {
-                // 6.2.5: pause physical execution and ask (5.5.6), rather than guess or fail silently.
-                controller.Halt();
-                pendingClarification = command.clarificationPrompt;
-                clarificationTime = Time.time;
-                OnClarificationNeeded?.Invoke(command.clarificationPrompt);
+                Ask(command.clarificationPrompt);
                 return;
             }
 
@@ -244,12 +309,20 @@ Command: go to the lamp (no lamp in the visible objects list)
             controller.Execute(command);
         }
 
+        void Ask(string question)
+        {
+            controller.Halt();
+            pendingClarification = question;
+            clarificationTime = Time.time;
+            OnClarificationNeeded?.Invoke(question);
+        }
+
         // Returns a question for the user if any step targets something the user can't currently see.
-        string FindGroundingProblem(NavigationCommand command, System.Collections.Generic.List<GroundedObject> visible, string utterance)
+        string FindGroundingProblem(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
             AttachMissingTarget(command, utterance);
 
-            var introducedByTurn = new System.Collections.Generic.HashSet<string>();
+            var introducedByTurn = new HashSet<string>();
 
             foreach (var step in command.steps)
             {
@@ -278,7 +351,7 @@ Command: go to the lamp (no lamp in the visible objects list)
                 bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
                 if (inView && horizontal && !introducedByTurn.Contains(target) && !grounding.IsCollapsedName(name))
                 {
-                    string aim = CheckAim(target, step.direction, visible);
+                    string aim = CheckAim(step, command, visible);
                     if (aim != null) return aim;
                 }
             }
@@ -307,9 +380,15 @@ Command: go to the lamp (no lamp in the visible objects list)
         // The object a step is about, as a scan name ("sofa") or one object's id, worked out from the
         // word the model wrote and, above all, the words the user actually said: if the model named
         // something the user never mentioned, what the user said wins.
-        string ResolveTarget(string condition, string utterance, System.Collections.Generic.List<GroundedObject> visible)
+        string ResolveTarget(string condition, string utterance, List<GroundedObject> visible)
         {
             if (grounding.IsId(condition)) return condition.Trim().ToLowerInvariant();
+
+            // "Go to it", "face that": the object the user picked last.
+            string word = condition.Trim().ToLowerInvariant();
+            if ((word == "it" || word == "that" || word == "this" || word == "that one" || word == "this one" || word == "there")
+                && lastPickedId != null && Time.time - lastPickTime <= stateTimeoutSeconds)
+                return lastPickedId;
 
             var known = grounding.KnownNames();
             var names = ObjectVocabulary.NamesFor(condition, known);
@@ -326,44 +405,298 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         // Moving toward "the chair" only makes sense if a chair lies that way: roughly ahead for
         // forward (the user faces where they want to go, 3.3.1), or on that side for left/right.
-        // Several in different directions is the thesis's ambiguity case (5.4.3): ask, rather than
-        // pick one. Objects in a line (two doors down a corridor) aren't ambiguous, since the
-        // nearest is reached first.
-        string CheckAim(string target, DirectionType direction, System.Collections.Generic.List<GroundedObject> visible)
+        // Several that way is the thesis's ambiguity case (5.4.3): use how the user singled one out
+        // ("the left one", "that one"), or the one they picked before; otherwise ask, with the options
+        // glowing. Objects in a line (two doors down a corridor) aren't ambiguous: the nearest is
+        // reached first. A pick that is off to the side still asks the user to turn to it first.
+        string CheckAim(NavigationStep step, NavigationCommand command, List<GroundedObject> visible)
         {
-            float minAngle = float.MaxValue, maxAngle = float.MinValue;
-            int candidates = 0;
-            GroundedObject nearest = default;
-            bool haveNearest = false;
+            string name = grounding.NameFor(step.condition);
+            var matches = visible.FindAll(o => grounding.Matches(o, step.condition));
 
-            foreach (var o in visible)
+            // "Go to the left plant": the user already said which, even if it's off to the side.
+            if (command.HasChoice && matches.Count > 1 && TryPick(matches, command.which, command.whichNear, visible, out GroundedObject said))
             {
-                if (!grounding.Matches(o, target)) continue;
-
-                if (!haveNearest || o.distanceMeters < nearest.distanceMeters) { nearest = o; haveNearest = true; }
-
-                bool inDirection =
-                    direction == DirectionType.Forward ? Mathf.Abs(o.angleDegrees) <= AheadDegrees :
-                    direction == DirectionType.Left ? o.angleDegrees < -SideDegrees :
-                    o.angleDegrees > SideDegrees;
-                if (!inDirection) continue;
-
-                candidates++;
-                minAngle = Mathf.Min(minAngle, o.angleDegrees);
-                maxAngle = Mathf.Max(maxAngle, o.angleDegrees);
+                Remember(name, said.id);
+                step.condition = said.id;
+                matches = new List<GroundedObject> { said };
             }
 
-            string name = grounding.NameFor(target);
-            if (candidates == 0)
+            var thatWay = matches.FindAll(o => InDirection(o, step.direction));
+            if (thatWay.Count == 0)
             {
+                var nearest = matches[0];
+                foreach (var o in matches) if (o.distanceMeters < nearest.distanceMeters) nearest = o;
+                if (grounding.IsId(step.condition)) glowNext = new List<Transform> { nearest.target }; // show which one to turn to
                 string where = nearest.angleDegrees < 0f ? "left" : "right";
-                return direction == DirectionType.Forward
+                return step.direction == DirectionType.Forward
                     ? "The " + name + " is off to your " + where + ". Turn to face it, then say it again."
-                    : "I don't see " + Article(name) + " to your " + (direction == DirectionType.Left ? "left" : "right") + ". It's off to your " + where + ".";
+                    : "I don't see " + Article(name) + " to your " + (step.direction == DirectionType.Left ? "left" : "right") + ". It's off to your " + where + ".";
             }
-            if (maxAngle - minAngle > AmbiguousSpreadDegrees)
-                return "There's more than one " + name + " in view. Face the one you mean and say it again.";
-            return null;
+
+            float minAngle = float.MaxValue, maxAngle = float.MinValue;
+            foreach (var o in thatWay) { minAngle = Mathf.Min(minAngle, o.angleDegrees); maxAngle = Mathf.Max(maxAngle, o.angleDegrees); }
+            if (maxAngle - minAngle <= AmbiguousSpreadDegrees)
+            {
+                // One object that way (or several in a line): head for the nearest, so the walk steers to it.
+                var nearestThatWay = thatWay[0];
+                foreach (var o in thatWay) if (o.distanceMeters < nearestThatWay.distanceMeters) nearestThatWay = o;
+                step.condition = nearestThatWay.id;
+                return null;
+            }
+
+            if (TryPicked(name, thatWay, out GroundedObject before))
+            {
+                step.condition = before.id;
+                return null;
+            }
+
+            pendingChoice = new PendingChoice
+            {
+                command = command, step = step, name = name, time = Time.time,
+                optionIds = thatWay.ConvertAll(o => o.id)
+            };
+            glowNext = thatWay.ConvertAll(o => o.target);
+            return "Which " + name + "? Look at the one you mean and say \"that one\", or tell me " + DescribeOptions(thatWay) + ".";
+        }
+
+        bool InDirection(GroundedObject o, DirectionType direction)
+        {
+            return direction == DirectionType.Forward ? Mathf.Abs(o.angleDegrees) <= AheadDegrees :
+                   direction == DirectionType.Left ? o.angleDegrees < -SideDegrees :
+                   o.angleDegrees > SideDegrees;
+        }
+
+        // ---------------------------------------------------------------- which one
+
+        bool ChoicePending()
+        {
+            return pendingChoice != null && Time.time - pendingChoice.time <= stateTimeoutSeconds;
+        }
+
+        void ClearChoice()
+        {
+            bool had = pendingChoice != null;
+            pendingChoice = null;
+            if (had || glowNext != null) { glowNext = null; OnChoicesChanged?.Invoke(NoObjects); }
+        }
+
+        // The answer to "which one?": pick from the options still in view and run the waiting command.
+        void ResolveChoice(NavigationCommand answer)
+        {
+            var pc = pendingChoice;
+            var visible = grounding.ScanFieldOfView();
+            var options = visible.FindAll(o => pc.optionIds.Contains(o.id));
+            if (options.Count == 0)
+            {
+                ClearChoice();
+                OnCommandResolved?.Invoke(NavigationCommand.Clarification("I can't see any of them from here now. Where do you want to go?"));
+                Ask("I can't see any of them from here now. Where do you want to go?");
+                return;
+            }
+
+            if (!TryPick(options, answer.which, answer.whichNear, visible, out GroundedObject picked))
+            {
+                string again = answer.which == "looking"
+                    ? "I can't tell which one you're looking at. Look straight at it and say \"that one\", or tell me " + DescribeOptions(options) + "."
+                    : "Which " + pc.name + "? Look at the one you mean and say \"that one\", or tell me " + DescribeOptions(options) + ".";
+                OnCommandResolved?.Invoke(NavigationCommand.Clarification(again));
+                Ask(again);
+                return;
+            }
+
+            Remember(pc.name, picked.id);
+            pc.step.condition = picked.id;
+            pendingChoice = null;
+            Proceed(pc.command, visible, string.Empty);
+        }
+
+        // The words that make each choice. The model sometimes adds a choice the user never made ("go to
+        // the plant" came back as "the nearest"), which would skip the question, so a choice only
+        // counts when the user's own words say it.
+        static readonly Dictionary<string, string[]> ChoiceWords = new Dictionary<string, string[]>
+        {
+            { "left", new[] { "left" } },
+            { "right", new[] { "right" } },
+            { "middle", new[] { "middle", "center", "centre" } },
+            { "nearest", new[] { "near", "nearer", "nearest", "close", "closer", "closest" } },
+            { "farthest", new[] { "far", "farther", "farthest", "further", "furthest" } },
+            { "looking", new[] { "that", "this", "there", "looking" } },
+        };
+
+        void KeepSaidChoice(NavigationCommand command, string utterance)
+        {
+            // "The plant by the stool": the target is the plant, picked by what it's next to.
+            var known = grounding.KnownNames();
+            string nearWord = ObjectVocabulary.NearObjectIn(utterance, known);
+            if (nearWord != null)
+            {
+                command.whichNear = nearWord;
+                string other = ObjectVocabulary.WordsIn(utterance, known).Find(w => !ObjectVocabulary.SameThing(w, nearWord, known));
+                foreach (var step in command.steps)
+                    if (step.HasCondition && other != null && ObjectVocabulary.SameThing(step.condition, nearWord, known))
+                        step.condition = other;
+            }
+
+            var words = new HashSet<string>(utterance.ToLowerInvariant().Split(new[] { ' ', ',', '.', '!', '?', '\'' }, StringSplitOptions.RemoveEmptyEntries));
+            if (command.which.Length > 0 && !(ChoiceWords.TryGetValue(command.which, out string[] cues) && Array.Exists(cues, words.Contains)))
+                command.which = string.Empty;
+
+            if (command.whichNear.Length > 0)
+            {
+                var nearNames = ObjectVocabulary.NamesFor(command.whichNear, known);
+                if (!ObjectVocabulary.WordsIn(utterance, known).Exists(w => ObjectVocabulary.NamesFor(w, known).Exists(nearNames.Contains)))
+                    command.whichNear = string.Empty;
+            }
+        }
+
+        bool TryPick(List<GroundedObject> options, string which, string near, List<GroundedObject> visible, out GroundedObject picked)
+        {
+            picked = default;
+            if (options.Count == 0) return false;
+
+            if (!string.IsNullOrEmpty(near))
+            {
+                var names = ObjectVocabulary.NamesFor(near, grounding.KnownNames());
+                var anchors = visible.FindAll(o => names.Contains(o.name) && !options.Exists(c => c.target == o.target));
+                if (anchors.Count == 0) return false;
+                float best = float.MaxValue;
+                foreach (var o in options)
+                    foreach (var a in anchors)
+                    {
+                        Vector3 d = CenterOf(o.target) - CenterOf(a.target); d.y = 0f;
+                        if (d.magnitude < best) { best = d.magnitude; picked = o; }
+                    }
+                return true;
+            }
+
+            switch (which)
+            {
+                case "looking":
+                    var looked = LookedAt(options.ConvertAll(o => o.target));
+                    if (looked == null) return false;
+                    picked = options.Find(o => o.target == looked);
+                    return true;
+                case "left": picked = Best(options, o => -o.angleDegrees); return true;
+                case "right": picked = Best(options, o => o.angleDegrees); return true;
+                case "middle": picked = Best(options, o => -Mathf.Abs(o.angleDegrees)); return true;
+                case "nearest": picked = Best(options, o => -o.distanceMeters); return true;
+                case "farthest": picked = Best(options, o => o.distanceMeters); return true;
+                default: return false;
+            }
+        }
+
+        static GroundedObject Best(List<GroundedObject> options, Func<GroundedObject, float> score)
+        {
+            var best = options[0];
+            foreach (var o in options) if (score(o) > score(best)) best = o;
+            return best;
+        }
+
+        bool TryPicked(string name, List<GroundedObject> options, out GroundedObject picked)
+        {
+            picked = default;
+            if (!pickedFor.TryGetValue(name, out string id) || Time.time - pickedTime[name] > stateTimeoutSeconds) return false;
+            int i = options.FindIndex(o => o.id == id);
+            if (i < 0) return false;
+            picked = options[i];
+            return true;
+        }
+
+        void Remember(string name, string id)
+        {
+            pickedFor[name] = id;
+            pickedTime[name] = Time.time;
+            lastPickedId = id;
+            lastPickTime = Time.time;
+        }
+
+        // Of these objects, the one the user is looking at: nearest the middle of the view, within
+        // LookDegrees. Null if none is.
+        public Transform LookedAt(IList<Transform> objects)
+        {
+            Transform pov = grounding.Pov;
+            if (pov == null || objects == null) return null;
+            Transform best = null;
+            float bestAngle = LookDegrees;
+            foreach (var t in objects)
+            {
+                if (t == null) continue;
+                float angle = Vector3.Angle(pov.forward, CenterOf(t) - pov.position);
+                if (angle <= bestAngle) { bestAngle = angle; best = t; }
+            }
+            return best;
+        }
+
+        static Vector3 CenterOf(Transform t) { return FOVMetadataGrounding.CenterOf(t); }
+
+        // "the one on your left, the one ahead or the one on your right" (or nearer / farther).
+        static string DescribeOptions(List<GroundedObject> options)
+        {
+            var sides = new List<string>();
+            foreach (var side in new[] { "left", "ahead", "right" })
+                if (options.Exists(o => FOVMetadataGrounding.SideOf(o.angleDegrees) == side))
+                    sides.Add(side == "ahead" ? "the one ahead" : "the one on your " + side);
+            if (sides.Count < 2)
+                return "the nearer or the farther one";
+            return sides.Count == 2 ? sides[0] + " or " + sides[1] : sides[0] + ", " + sides[1] + " or " + sides[2];
+        }
+
+        // Reads a short answer to "which one?": "that one" (by looking), "the left one", "the one on the
+        // right", "the closer one", "the one next to the stool". False for anything that's a command.
+        bool TryReadAnswer(string utterance, out NavigationCommand answer)
+        {
+            answer = null;
+            var words = WordsOf(utterance);
+            if (words.Count == 0 || words.Count > 8) return false;
+            foreach (var verb in new[] { "go", "move", "walk", "turn", "head", "take", "face", "stop", "back" })
+                if (words.Contains(verb)) return false;
+
+            if (IsPointing(utterance)) { answer = new NavigationCommand { which = "looking" }; return true; }
+
+            string near = ObjectVocabulary.NearObjectIn(utterance, grounding.KnownNames());
+            if (near != null) { answer = new NavigationCommand { whichNear = near }; return true; }
+
+            foreach (var choice in ChoiceWords)
+                if (choice.Key != "looking" && Array.Exists(choice.Value, words.Contains))
+                {
+                    answer = new NavigationCommand { which = choice.Key };
+                    return true;
+                }
+            if (words.Contains("ahead") || words.Contains("straight") || words.Contains("front"))
+            {
+                answer = new NavigationCommand { which = "middle" };
+                return true;
+            }
+            return false;
+        }
+
+        static List<string> WordsOf(string utterance)
+        {
+            var words = new List<string>();
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in utterance.ToLowerInvariant() + " ")
+            {
+                if (char.IsLetter(c) || c == '\'') sb.Append(c);
+                else if (sb.Length > 0) { words.Add(sb.ToString()); sb.Length = 0; }
+            }
+            return words;
+        }
+
+        // "That one", "this one", "that tree", "the one I'm looking at": pointing by looking.
+        static bool IsPointing(string utterance)
+        {
+            var words = new List<string>();
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in utterance.ToLowerInvariant() + " ")
+            {
+                if (char.IsLetter(c) || c == '\'') sb.Append(c);
+                else if (sb.Length > 0) { words.Add(sb.ToString()); sb.Length = 0; }
+            }
+            if (words.Count == 0 || words.Count > 6) return false;
+            if (words[0] == "that" || words[0] == "this" || words[0] == "there") return words.Count <= 3;
+            string text = string.Join(" ", words);
+            return text.StartsWith("the one i") || text.StartsWith("the one that i");
         }
 
         static string Article(string name)

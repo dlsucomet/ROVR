@@ -54,10 +54,10 @@ namespace ROVR
             return result;
         }
 
-        // Object words in what the user said, longest first ("coffee table" before "table").
+        // Object words in what the user said, in the order said ("coffee table" counts once, not also as "table").
         public static List<string> WordsIn(string utterance, ICollection<string> knownNames)
         {
-            var found = new List<string>();
+            var found = new List<KeyValuePair<int, string>>();
             string text = " " + Normalize(utterance) + " ";
 
             var candidates = new List<string>(knownNames);
@@ -70,12 +70,36 @@ namespace ROVR
                 {
                     int at = text.IndexOf(" " + form + " ", StringComparison.Ordinal);
                     if (at < 0) continue;
-                    if (NamesFor(c, knownNames).Count > 0 && !found.Contains(c)) found.Add(c);
+                    if (NamesFor(c, knownNames).Count > 0 && !found.Exists(f => f.Value == c)) found.Add(new KeyValuePair<int, string>(at, c));
                     text = text.Remove(at + 1, form.Length).Insert(at + 1, new string('_', form.Length)); // don't reuse "table" of "coffee table"
                     break;
                 }
             }
-            return found;
+            found.Sort((a, b) => a.Key.CompareTo(b.Key));
+            return found.ConvertAll(f => f.Value);
+        }
+
+        static readonly string[] NearPhrases = { "next to", "beside", "close to", "nearest to", "closest to", "near", "by" };
+
+        // "The tree by the pond", "the one next to the stool": the object after the "by" / "next to".
+        public static string NearObjectIn(string utterance, ICollection<string> knownNames)
+        {
+            string text = " " + Normalize(utterance) + " ";
+            foreach (var phrase in NearPhrases)
+            {
+                int at = text.IndexOf(" " + phrase + " ", StringComparison.Ordinal);
+                if (at < 0) continue;
+                var after = WordsIn(text.Substring(at + phrase.Length + 1), knownNames);
+                if (after.Count > 0) return after[0];
+            }
+            return null;
+        }
+
+        // Whether two words can mean the same kind of object ("couch" and "sofa").
+        public static bool SameThing(string a, string b, ICollection<string> knownNames)
+        {
+            var names = NamesFor(a, knownNames);
+            return NamesFor(b, knownNames).Exists(names.Contains);
         }
 
         static IEnumerable<string> SingularForms(string w)
