@@ -41,6 +41,7 @@ utterance
 | `SemanticIntentResolver.cs` | Orchestrates all of it and enforces the rules below in code. |
 | `SpeechSegmenter.cs` | Splits microphone audio into sentences. A sentence ends only after 1.5 s of silence, so pausing mid-sentence doesn't cut it off. Hands out the sentence so far every 0.5 s and at each short pause, for early halts. Tells voice from silence against the room's noise floor. |
 | `VoiceCommandRouter.cs` | Routes speech-to-text output: halts early on a leading halt word in the sentence in progress, drops a sentence reported twice within 1 s, and submits the rest. |
+| `SpeedWords.cs` | "Faster", "slower", "slow down", "normal speed": fixed keywords that change the walking speed at once. |
 | `TranscriptFilter.cs` | Strips Whisper's sound annotations ("[BLANK_AUDIO]", "(wind blowing)") and stock hallucinations ("Thank you."). |
 | `ROVRDebugConsole.cs` | Optional on-screen box in the Game view for typing commands instead of speaking. |
 | `../GUI/VRControlPanel.cs` | Vert's panel. Adds the pipeline to `PlayerBody` at Play, turns microphone audio into text (SpeechSegmenter + Whisper), and shows the reply (see below). |
@@ -54,9 +55,19 @@ Matched as fixed keywords at the start of what was said, so they work without th
 
 Add more in `HaltLeads` in `InterruptModule.cs`. A halt followed by a correction ("wait, I mean left") stops first, then sends the correction to the LLM.
 
+## Speed
+
+Three speeds: **Slow 1 m/s, Normal 2 m/s, Fast 3 m/s** (`slowSpeed`, `moveSpeed`, `fastSpeed` on `NavigationController`). Turns are unaffected.
+
+- **Experimenter:** the **Slow / Normal / Fast** buttons along the top of the panel; the one in use is green. Each session starts at Normal (`ResetSession` resets it too).
+- **Participant, by voice:** "faster", "go faster", "speed up", "slower", "slow down", "normal speed" (whole sentence) move one level, instantly and mid-move, from the sentence so far, like "stop". Add words in `SpeedWords.cs`.
+- **One command:** "slowly walk to the door", "quickly move forward 5 meters": the LLM sets that command's speed only.
+
 ## The control panel
 
 `VRControlPanel` keeps all of Vert's behaviour (world buttons, mute button, subtitles) and adds:
+
+- **Slow / Normal / Fast** speed buttons (see Speed above).
 
 - **Use LLM** (on by default): finished sentences go to the pipeline. Off: only Vert's fixed phrases (`move forward/backward/left/right`) work, as before.
 - **The microphone starts muted.** Press Unmute to start listening.
@@ -92,6 +103,7 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 
 - **Closed world, enforced by the engine.** A move may only target something in the current view. If the model returns a target that isn't (or isn't a known object type), the engine replaces it with a clarification question. The one exception is `turn ... until you see X` — that is how X gets found.
 - **Which one.** When several matching objects are in view in the direction asked, the system asks ("Which plant? Look at the one you mean and say "that one", or tell me the one on your left, the one ahead or the one on your right.") and the options glow. The user answers by **looking at one and saying "that one"**, or in words: "the left one", "the closer one", "the one next to the stool". Those answers are read by the engine, not the LLM (instant, and the model was seen to misread them). The choice can also be part of the command: "go to the left plant", "go to that tree" (while looking at it), "the plant by the pond". The pick is remembered for a minute, so turning to face it and repeating the command doesn't ask again, and "it" means that object. A pick that's off to the side still asks the user to turn to it first, and only it glows.
+- **The engine keeps the model to what was said.** Besides object words and choices: "a bit" only counts if the user said bit, little, slightly, touch, more or again (the model read "slowly" as "a bit"); and if the model returns fewer steps than the actions the user chained with "then" / "and then" / "after that", each part is sent to the LLM on its own and the results are joined (the model was seen to drop "then turn right").
 - **Stacked commands.** A command can be several steps, done in order: sequences ("move forward 10 meters, then turn right", "back 3 meters then left 2 meters"), on arrival ("face to the right when you reach the tree" = go to the tree, then turn), on sight ("move forward and turn left when you see the door": walks until the door comes into view, then turns; if it's already in view, that means at the door) and repeats ("turn right three times"). Up to 10 steps. Only the first step is checked against the current view: a later step's target ("turn around and go to the tree") is found when that step starts, and if it isn't there, the chain stops with a message. A blocked step ends the chain. The engine also corrects three things the model was seen to get wrong in chains: repeats ("three times"), "then turn around" (180°), and "left 2 meters" (a move, not a turn).
 - **Heading for one object.** Once a command targets a particular object, the walk heads straight for it, even if it's a little to one side; the view doesn't turn. There's no path-finding: something in between ends the move with "Something is in the way." "Until you hit a wall" still goes straight ahead.
 - **The engine, not the LLM, decides which object is meant.** The LLM writes the object in the user's own word ("couch"); the engine maps it onto what's in view (`ObjectVocabulary`). Given the full list of visible objects, `gemma3n:e4b` was seen to swap one kind for another ("tree" became a listed plant), so the words the user actually said always win, and a "go to the X" that the model left without a target gets X.

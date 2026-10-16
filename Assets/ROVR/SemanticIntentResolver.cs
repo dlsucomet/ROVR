@@ -39,6 +39,7 @@ namespace ROVR
         public event Action<string> OnError;
         public event Action<NavigationCommand> OnCommandResolved;
         public event Action<IList<Transform>> OnChoicesChanged; // objects to glow while asking "which one?"; empty = none
+        public event Action<SpeedLevel> OnSpeedChanged;
 
         public MovementHabits Habits { get; } = new MovementHabits();
         public float LastLatencySeconds => ollama != null ? ollama.LastLatencySeconds : 0f;
@@ -80,6 +81,7 @@ STEPS. Each step has:
 - amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
 - condition: the object to move toward or stop at, in the user's own word, singular (tree, door, couch); when there is no target it is an empty string """" (never the word none)
 - until: reach = the step ends on getting to the object (the default); see = it ends as soon as the object comes into view ('when you see the door')
+- speed: slow, normal or fast when the user says how fast for this command ('slowly walk to the door', 'quickly go to the tree'); otherwise an empty string
 
 SEVERAL STEPS. A command can have several steps, done in order. 'Move forward 10 meters, then turn right' = a move step, then a turn step. 'Face right when you reach the tree' = move to the tree, then turn right: put the steps in the order they happen, not the order they are said. 'Move forward and turn left when you see the door' = move forward with condition door and until see, then turn left. 'Turn right three times' = three turn steps; 'move forward 2 meters twice' = two move steps of 2 meters.
 
@@ -97,47 +99,49 @@ If you cannot tell what the user wants, return no steps and put a short question
 
 EXAMPLES
 Command: move forward 5 meters
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":5,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go forward until you reach the door (a door is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: back up a bit
-{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (previous command was a small move forward)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: left
-{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: move right half a meter
-{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (Previous command: none)
 {""steps"":[],""clarification"":""More of what? Tell me which way to move."",""which"":"""",""which_near"":""""}
 Command: turn around until you see a chair
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""chair"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: turn around until you see the tree (no tree in the visible objects list)
-{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the couch (a sofa is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""couch"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the left plant (two plants are listed)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""plant"",""until"":""reach""}],""clarification"":"""",""which"":""left"",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""plant"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":""left"",""which_near"":""""}
 Command: go to that tree
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""}],""clarification"":"""",""which"":""looking"",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":""looking"",""which_near"":""""}
 Command: the one next to the pond (Question you asked: Which tree?)
 {""steps"":[],""clarification"":"""",""which"":"""",""which_near"":""pond""}
 Command: the closer one (Question you asked: Which chair?)
 {""steps"":[],""clarification"":"""",""which"":""nearest"",""which_near"":""""}
 Command: move forward 10 meters, then turn right
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":10,""condition"":"""",""until"":""reach""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""exact"",""magnitude"":10,""condition"":"""",""until"":""reach"",""speed"":""""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: face to the right when you reach the tree (a tree is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach"",""speed"":""""},{""action"":""turn"",""direction"":""right"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: turn left when you get to the tree (a tree is ahead)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach"",""speed"":""""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: move back 3 meters then left 2 meters
-{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""exact"",""magnitude"":3,""condition"":"""",""until"":""reach""},{""action"":""move"",""direction"":""left"",""amount"":""exact"",""magnitude"":2,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""exact"",""magnitude"":3,""condition"":"""",""until"":""reach"",""speed"":""""},{""action"":""move"",""direction"":""left"",""amount"":""exact"",""magnitude"":2,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: keep going forward and turn left when you see a door
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""see""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""see"",""speed"":""""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: turn left twice
-{""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: slowly walk to the door (a door is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""reach"",""speed"":""slow""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the lamp (no lamp in the visible objects list)
-{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp"",""until"":""reach""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
 
         void Awake()
         {
@@ -174,6 +178,26 @@ Command: go to the lamp (no lamp in the visible objects list)
             pickedFor.Clear();
             pickedTime.Clear();
             lastPickedId = null;
+            SetSpeed(SpeedLevel.Normal);
+        }
+
+        public SpeedLevel Speed => controller.Speed;
+
+        // The experimenter's speed buttons.
+        public void SetSpeed(SpeedLevel level)
+        {
+            controller.Speed = level;
+            OnSpeedChanged?.Invoke(level);
+        }
+
+        // "Faster" / "slower" / "normal speed", one level at a time.
+        public void ChangeSpeed(SpeedChange change)
+        {
+            var level = controller.Speed;
+            if (change == SpeedChange.Faster) level = level == SpeedLevel.Slow ? SpeedLevel.Normal : SpeedLevel.Fast;
+            else if (change == SpeedChange.Slower) level = level == SpeedLevel.Fast ? SpeedLevel.Normal : SpeedLevel.Slow;
+            else if (change == SpeedChange.Normal) level = SpeedLevel.Normal;
+            SetSpeed(level);
         }
 
         // Stops movement now and cancels any request still waiting on the LLM, so a late reply can't
@@ -198,6 +222,14 @@ Command: go to the lamp (no lamp in the visible objects list)
                 ClearChoice();
                 if (string.IsNullOrEmpty(interrupt.remainder)) return;
                 utterance = interrupt.remainder; // "wait, I mean left": the correction still goes through
+            }
+
+            // "Faster", "slow down": a fixed keyword, like a halt (the LLM handles "slowly go to the door").
+            var speedChange = SpeedWords.Evaluate(utterance);
+            if (speedChange != SpeedChange.None)
+            {
+                ChangeSpeed(speedChange);
+                return;
             }
 
             // "More" / "again" mean nothing without a command to repeat. Say so without asking the model,
@@ -254,8 +286,56 @@ Command: go to the lamp (no lamp in the visible objects list)
             string userPrompt = BuildUserPrompt(utterance, grounding.ToJson(visible));
 
             ollama.RequestCommand(SystemPrompt, userPrompt,
-                command => { if (id == requestId) OnResolved(command, visible, utterance); },
+                command =>
+                {
+                    if (id != requestId) return;
+                    // The model was seen to drop a step from "move forward 10 meters, then turn right".
+                    // If it returned fewer steps than the actions the user chained, ask about each part.
+                    var clauses = SplitClauses(utterance);
+                    if (clauses.Count > 1 && !command.IsClarification && command.steps.Length < clauses.Count)
+                        ResolveClauses(clauses, 0, new List<NavigationStep>(), visible, utterance, id);
+                    else
+                        OnResolved(command, visible, utterance);
+                },
                 error => { if (id == requestId) OnError?.Invoke(error); });
+        }
+
+        // Asks the LLM about each chained part in turn and runs them as one command.
+        void ResolveClauses(List<string> clauses, int index, List<NavigationStep> steps, List<GroundedObject> visible, string utterance, int id)
+        {
+            if (index == clauses.Count)
+            {
+                OnResolved(new NavigationCommand { steps = steps.ToArray() }, visible, utterance);
+                return;
+            }
+            ollama.RequestCommand(SystemPrompt, BuildUserPrompt(clauses[index], grounding.ToJson(visible)),
+                part =>
+                {
+                    if (id != requestId) return;
+                    if (part.IsClarification) { OnResolved(part, visible, utterance); return; }
+                    steps.AddRange(part.steps);
+                    ResolveClauses(clauses, index + 1, steps, visible, utterance, id);
+                },
+                error => { if (id == requestId) OnError?.Invoke(error); });
+        }
+
+        static readonly System.Text.RegularExpressions.Regex ClauseBreak = new System.Text.RegularExpressions.Regex(
+            @"\s*,?\s*(?:\band then\b|\bthen\b|\bafter that\b|\band\b(?=\s+(?:turn|move|go|walk|face|step|head|run|back)\b))\s*",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        // "Move forward 10 meters, then turn right" -> two parts. Sentences that tie steps to an event
+        // ("turn left when you see the door") stay whole: those aren't simple sequences.
+        public static List<string> SplitClauses(string utterance)
+        {
+            var parts = new List<string>();
+            string lower = " " + utterance.ToLowerInvariant() + " ";
+            foreach (var tie in new[] { " when ", " until ", " once ", " as soon as ", " after you ", " before ", " till " })
+                if (lower.Contains(tie)) { parts.Add(utterance); return parts; }
+
+            foreach (var part in ClauseBreak.Split(utterance))
+                if (part.Trim().Length > 0 && part.IndexOfAny("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray()) >= 0)
+                    parts.Add(part.Trim().Trim(',', '.'));
+            return parts;
         }
 
         string BuildUserPrompt(string utterance, string visibleJson)
@@ -589,12 +669,20 @@ Command: go to the lamp (no lamp in the visible objects list)
             { "looking", new[] { "that", "this", "there", "looking" } },
         };
 
+        static readonly string[] SmallWords = { "bit", "little", "slightly", "touch", "tad", "nudge", "smidge", "more", "again", "further" }; // "more" and "again" repeat a small move
+
         void KeepSaidChoice(NavigationCommand command, string utterance)
         {
             // A move to an object heads for the object. The model was seen to turn "the left plant" into
             // a move to the left, and to copy "left" from the previous command into "go to the plant":
             // a side the user never said is dropped, and "the left X" is which one, not which way.
             string spoken = " " + string.Join(" ", WordsOf(utterance)) + " ";
+
+            // "Slowly walk to the tree" came back as "a bit" toward the tree: "a bit" needs the words for it.
+            bool saidSmall = Array.Exists(SmallWords, w => spoken.Contains(" " + w + " "));
+            foreach (var step in command.steps)
+                if (step.amount == AmountType.Small && !saidSmall) step.amount = AmountType.None;
+
             foreach (var step in command.steps)
             {
                 if (step.action != ActionType.Move || !step.HasCondition) continue;

@@ -12,7 +12,7 @@ LLM-driven voice navigation in VR. A thesis prototype comparing joystick movemen
 Voice navigation runs through the LLM in `Assets/main.unity`:
 
 - **Speech:** [whisper.unity](https://github.com/Macoron/whisper.unity) transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine.
-- **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons and a mic mute button. **The mic starts muted.**
+- **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons, a mic mute button and Slow / Normal / Fast speed buttons. **The mic starts muted.**
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
 - **Halt words** (`stop`, `wait`, and Filipino `ops`) are fixed keywords. They stop the player before the sentence is finished, without the LLM.
 - **Fallback:** untick **Use LLM** on the panel for the four fixed phrases only (`move forward/backward/left/right`).
@@ -80,6 +80,8 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 | `turn right three times` | Repeats the turn |
 | `turn left a little`, `turn 45 degrees to the right` | Smooth turns of any angle, with the edges of the view darkened while turning |
 | `face the door` | Turns to face it |
+| `faster`, `slow down`, `normal speed` | Changes walking speed at once (1 / 2 / 3 m/s), even mid-move |
+| `slowly walk to the tree` | Slow for this command only |
 | `turn around until you see the tree` | Turns in 90° steps until the tree is in view (Plain) |
 | `wait, I mean left` (while moving) | Stops instantly, then moves left |
 | `stop`, or `ops` | Stops immediately |

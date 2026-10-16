@@ -26,6 +26,9 @@ namespace ROVR
     // ("move forward and turn left when you see the door").
     public enum UntilType { Reach, See }
 
+    // Walking speed: set by the experimenter's buttons or "faster" / "slower", or for one command.
+    public enum SpeedLevel { Slow, Normal, Fast }
+
     [Serializable]
     public class RawNavigationStep
     {
@@ -35,6 +38,7 @@ namespace ROVR
         public float magnitude;
         public string condition;
         public string until;
+        public string speed;
     }
 
     [Serializable]
@@ -54,6 +58,7 @@ namespace ROVR
         public float magnitude;   // meters for Move, degrees for Turn; 0 = not specified
         public string condition;  // object to move to / turn until seen: a name ("tree") or one object's id ("tree-3"); empty = none
         public UntilType until;   // with a condition: stop on reaching it, or as soon as it's in view
+        public SpeedLevel? speed; // this step only ("slowly go to the door"); null = the current speed
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;
@@ -76,9 +81,10 @@ namespace ROVR
           ""amount"": { ""type"": ""string"", ""enum"": [""none"", ""exact"", ""small""] },
           ""magnitude"": { ""type"": ""number"" },
           ""condition"": { ""type"": ""string"" },
-          ""until"": { ""type"": ""string"", ""enum"": [""reach"", ""see""] }
+          ""until"": { ""type"": ""string"", ""enum"": [""reach"", ""see""] },
+          ""speed"": { ""type"": ""string"", ""enum"": ["""", ""slow"", ""normal"", ""fast""] }
         },
-        ""required"": [""action"", ""direction"", ""amount"", ""magnitude"", ""condition"", ""until""]
+        ""required"": [""action"", ""direction"", ""amount"", ""magnitude"", ""condition"", ""until"", ""speed""]
       }
     },
     ""clarification"": { ""type"": ""string"" },
@@ -154,7 +160,8 @@ namespace ROVR
                         amount = amount,
                         magnitude = magnitude,
                         condition = condition,
-                        until = ParseEnum(r.until, UntilType.Reach)
+                        until = ParseEnum(r.until, UntilType.Reach),
+                        speed = string.IsNullOrEmpty(r.speed) ? (SpeedLevel?)null : ParseEnum(r.speed, SpeedLevel.Normal)
                     });
                     if (steps.Count == MaxSteps) break;
                 }

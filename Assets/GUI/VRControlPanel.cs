@@ -41,6 +41,9 @@ public class VRControlPanel : MonoBehaviour
     public Button mazeButton;
     public Button houseButton;
     public Button micMuteButton;
+    public Button slowButton;   // walking speed (experimenter); also "faster" / "slower" by voice
+    public Button normalButton;
+    public Button fastButton;
     public Text subtitlesText; // Displays whatever speech is registered
     public Text outputText;    // Displays feedback: green = understood, yellow = needs you, red = didn't work
 
@@ -82,6 +85,11 @@ public class VRControlPanel : MonoBehaviour
         if (plainButton != null) plainButton.onClick.AddListener(() => TeleportTo(plainDestination, 0f));
         if (mazeButton != null) mazeButton.onClick.AddListener(() => TeleportTo(mazeDestination, 90f));
         if (houseButton != null) houseButton.onClick.AddListener(() => TeleportTo(houseDestination, 0f));
+
+        if (slowButton != null) slowButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Slow));
+        if (normalButton != null) normalButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Normal));
+        if (fastButton != null) fastButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Fast));
+        ShowSpeed(SpeedLevel.Normal, false);
 
         if (micMuteButton != null)
         {
@@ -325,6 +333,7 @@ public class VRControlPanel : MonoBehaviour
         _resolver.OnClarificationNeeded += HandleQuestion;
         _resolver.OnStatus += HandleNotice;
         _resolver.OnError += HandleError;
+        _resolver.OnSpeedChanged += level => ShowSpeed(level, true);
 
         _router = NewRouter();
     }
@@ -339,7 +348,31 @@ public class VRControlPanel : MonoBehaviour
     // are matched by InterruptModule as fixed keywords, never by the LLM.
     private VoiceCommandRouter NewRouter()
     {
-        return new VoiceCommandRouter(HaltFromVoice, SubmitToLLM, () => Time.time);
+        return new VoiceCommandRouter(HaltFromVoice, SubmitToLLM, () => Time.time, 1.0f, change => _resolver.ChangeSpeed(change));
+    }
+
+    // ---------- Speed ----------
+
+    private static readonly float[] FixedPhraseSpeeds = { 1f, 2f, 3f }; // m/s for Slow / Normal / Fast without the LLM
+
+    private void SetSpeed(SpeedLevel level)
+    {
+        if (_resolver != null) _resolver.SetSpeed(level); // calls back ShowSpeed
+        else ShowSpeed(level, true);
+    }
+
+    // Highlights the speed in use, and says so.
+    private void ShowSpeed(SpeedLevel level, bool announce)
+    {
+        moveSpeed = FixedPhraseSpeeds[(int)level];
+        var buttons = new[] { slowButton, normalButton, fastButton };
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            if (buttons[i] == null) continue;
+            var image = buttons[i].GetComponent<Image>();
+            if (image != null) image.color = i == (int)level ? new Color(0.55f, 0.9f, 0.55f) : Color.white;
+        }
+        if (announce) SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
     }
 
     private void HaltFromVoice()
@@ -400,7 +433,8 @@ public class VRControlPanel : MonoBehaviour
                         : step.amount == AmountType.Small ? " a bit"
                         : step.HasMagnitude ? " " + step.magnitude.ToString("0.#") + " m"
                         : "";
-                    parts.Add("moving" + direction + how);
+                    string pace = step.speed == SpeedLevel.Slow ? ", slowly" : step.speed == SpeedLevel.Fast ? ", fast" : "";
+                    parts.Add("moving" + direction + how + pace);
                     break;
                 case ActionType.Turn:
                     string until = step.HasCondition ? " to face the " + target

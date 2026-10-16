@@ -20,7 +20,9 @@ namespace ROVR
     {
         [SerializeField] Transform pov;
         [SerializeField] FOVMetadataGrounding grounding; // needed for "turn until you see X"
-        [SerializeField] float moveSpeed = 2f;           // m/s, fixed cap — no acceleration curve
+        [SerializeField] float moveSpeed = 2f;           // m/s at Normal speed, fixed cap — no acceleration curve
+        [SerializeField] float slowSpeed = 1f;           // m/s at Slow
+        [SerializeField] float fastSpeed = 3f;           // m/s at Fast
         [SerializeField] float verticalSpeed = 1.5f;     // m/s for explicit up/down commands
         [Tooltip("Seconds a 90-degree turn takes. Turns ease in and out; other angles take proportionally long (but at least shortestTurnSeconds).")]
         [SerializeField] float quarterTurnSeconds = 0.9f;
@@ -43,6 +45,10 @@ namespace ROVR
 
         public bool IsBusy => activeRoutine != null;
         public bool IsTurning { get; private set; } // for the comfort vignette
+
+        // Walking speed for moves without their own; changing it takes effect mid-move.
+        public SpeedLevel Speed { get; set; } = SpeedLevel.Normal;
+        public float SpeedOf(SpeedLevel level) { return level == SpeedLevel.Slow ? slowSpeed : level == SpeedLevel.Fast ? fastSpeed : moveSpeed; }
         // The step that ended a command early (blocked, or its target not found), for the message.
         public NavigationStep FailedStep { get; private set; }
 
@@ -150,6 +156,7 @@ namespace ROVR
             float travelled = 0f;
             int blockedFrames = 0;
             bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
+            bool walking = horizontal || step.direction == DirectionType.Back;
 
             // "Move forward until you see the door": go that way, and stop the moment it's in view.
             if (step.HasCondition && step.until == UntilType.See && grounding != null)
@@ -157,6 +164,7 @@ namespace ROVR
                 float nextLook = 0f;
                 while (travelled < target)
                 {
+                    if (walking) speed = SpeedOf(step.speed ?? Speed);
                     if (Time.time >= nextLook)
                     {
                         nextLook = Time.time + LookInterval;
@@ -185,6 +193,7 @@ namespace ROVR
 
             while (travelled < target)
             {
+                if (walking) speed = SpeedOf(step.speed ?? Speed);
                 float thisSpeed = speed;
                 if (goal != null)
                 {
