@@ -30,6 +30,12 @@ public class VRControlPanel : MonoBehaviour
     [Tooltip("Also save the sentence-so-far captions while someone is still speaking (many lines).")]
     public bool transcriptPartials;
 
+    [Header("Bridge (PC)")]
+    [Tooltip("The ROVR bridge on the PC (Bridge/rovr_bridge.py). LLM commands go through it to Ollama, and " +
+             "transcript lines are shown live in its terminal. On the headset over the USB cable this stays " +
+             "127.0.0.1 (the build hook links the port); over Wi-Fi use the PC's IP. Empty = talk to Ollama directly.")]
+    public string bridgeUrl = "http://127.0.0.1:8765";
+
     [Header("Voice Commands")]
     [Tooltip("On: every sentence goes to the LLM pipeline (Ollama must be running), which moves the player. " +
              "Off: only the fixed phrases \"move forward/backward/left/right\" work.")]
@@ -89,6 +95,7 @@ public class VRControlPanel : MonoBehaviour
         if (saveTranscript)
         {
             _transcript = SessionTranscript.Begin();
+            if (_transcript != null && !string.IsNullOrEmpty(bridgeUrl)) _transcript.SendTo(bridgeUrl.TrimEnd('/') + "/log");
             Record("SESSION", "Started. Scene: " + gameObject.scene.name + ". Voice commands: " + (useLLM ? "LLM" : "fixed phrases") + ". Mic: muted");
         }
 
@@ -340,12 +347,14 @@ public class VRControlPanel : MonoBehaviour
             if (isSentence) _pendingSentence = null; else _pendingPartial = null;
             int generation = _speechGeneration;
 
+            float whisperStarted = Time.realtimeSinceStartup;
             WhisperResult result = await whisperManager.GetTextAsync(PadForWhisper(audio, _segmenter.SampleRate), _segmenter.SampleRate, 1);
+            float whisperSeconds = Time.realtimeSinceStartup - whisperStarted;
             if (this == null) return; // destroyed while Whisper was working
             if (result == null || generation != _speechGeneration || _isMicMuted) continue;
 
             if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + (audio.Length / (float)_segmenter.SampleRate).ToString("F1") + " s): \"" + result.Result + "\"");
-            if (isSentence) OnSentenceHeard(result.Result);
+            if (isSentence) OnSentenceHeard(result.Result, audio.Length / (float)_segmenter.SampleRate, whisperSeconds);
             else OnPartialHeard(result.Result);
         }
         _transcribing = false;
@@ -387,13 +396,15 @@ public class VRControlPanel : MonoBehaviour
     }
 
     // A finished sentence (it ended with deadAirSec of silence).
-    private void OnSentenceHeard(string text)
+    // speechSeconds / whisperSeconds: how long the sentence was, and how long Whisper took (for the transcript).
+    private void OnSentenceHeard(string text, float speechSeconds = -1f, float whisperSeconds = -1f)
     {
         // Drops Whisper's notes for non-speech ("[BLANK_AUDIO]") and the stock phrases it invents from noise ("Thank you.").
         string spokenText = TranscriptFilter.Clean(text);
-        Record("HEARD", spokenText != null
+        string timing = whisperSeconds >= 0f ? $"  [{speechSeconds:F1} s of speech, transcribed in {whisperSeconds:F2} s]" : "";
+        Record("HEARD", (spokenText != null
             ? "\"" + spokenText.ToLower() + "\"  (Whisper: \"" + (text ?? "").Trim() + "\")"
-            : "ignored as noise  (Whisper: \"" + (text ?? "").Trim() + "\")");
+            : "ignored as noise  (Whisper: \"" + (text ?? "").Trim() + "\")") + timing);
         if (spokenText != null)
         {
             spokenText = spokenText.ToLower();
@@ -430,6 +441,8 @@ public class VRControlPanel : MonoBehaviour
         _grounding = GetOrAdd<FOVMetadataGrounding>();
         GetOrAdd<NavigationController>();
         _ollama = GetOrAdd<OllamaClient>();
+        if (!string.IsNullOrEmpty(bridgeUrl)) _ollama.UseEndpoint(bridgeUrl.TrimEnd('/') + "/api/chat");
+        _ollama.OnLatency += seconds => Record("LLM", "Answered in " + seconds.ToString("F2") + " s");
         _resolver = GetOrAdd<SemanticIntentResolver>();
         GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
         GetOrAdd<ComfortVignette>(); // darkens the edges of the view while turning

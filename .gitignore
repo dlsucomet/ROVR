@@ -63,3 +63,6 @@ crashlytics-build.properties
 
 # Session transcripts (participants' speech)
 /[Tt]ranscripts/
+
+# Bridge session logs (participants' speech)
+/Bridge/logs/

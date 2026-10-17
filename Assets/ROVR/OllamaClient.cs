@@ -24,7 +24,46 @@ namespace ROVR
         const string KeepAlive = "30m"; // keep the model resident between commands
 
         // Scenes saved with the old default still say "localhost"; fix that on the fly.
-        string Endpoint => endpoint.Replace("//localhost", "//127.0.0.1");
+        string Endpoint => useDirect ? DirectEndpoint : endpoint.Replace("//localhost", "//127.0.0.1");
+
+        // When the endpoint is the ROVR bridge (Bridge/rovr_bridge.py) and nothing answers there, the
+        // client falls back to Ollama on this PC and stays with it for the session. That keeps the
+        // Unity Editor working without the bridge. On the headset the fallback also fails, as it should.
+        const string DirectEndpoint = "http://127.0.0.1:11434/api/chat";
+        bool useDirect;
+
+        // Sends requests to this URL instead of the Inspector's endpoint (the panel uses it for the bridge).
+        public void UseEndpoint(string url)
+        {
+            endpoint = url;
+            useDirect = false;
+        }
+
+        // Only "nothing is listening" falls back. A timeout means the server is there but slow
+        // (the model still loading), so waiting again elsewhere would only double the wait.
+        bool ShouldFallBack(UnityWebRequest request)
+        {
+            return !useDirect && Endpoint != DirectEndpoint
+                && request.result == UnityWebRequest.Result.ConnectionError
+                && (request.error == null || request.error.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) < 0);
+        }
+
+        void SwitchToDirect()
+        {
+            Debug.LogWarning("[ROVR] The bridge at " + endpoint + " isn't running, so this session talks to Ollama directly. "
+                             + "Start it with Tools > ROVR > Start Bridge to see the commands live.");
+            useDirect = true;
+        }
+
+        static UnityWebRequest NewPost(string url, byte[] body, int timeout)
+        {
+            var request = new UnityWebRequest(url, "POST");
+            request.uploadHandler = new UploadHandlerRaw(body);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            request.timeout = timeout;
+            return request;
+        }
 
         [Serializable]
         class OllamaMessage
@@ -65,14 +104,19 @@ namespace ROVR
             string body = systemPrompt != null
                 ? BuildRequestJson(systemPrompt, "Visible objects: []\nPrevious command: none\nCommand: \"stop\"")
                 : "{\"model\":\"" + JsonEscape(model) + "\",\"messages\":[],\"keep_alive\":\"" + KeepAlive + "\"}";
-            var request = new UnityWebRequest(Endpoint, "POST");
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(body);
+            var request = NewPost(Endpoint, bodyRaw, 120);
             try
             {
-                request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
-                request.downloadHandler = new DownloadHandlerBuffer();
-                request.SetRequestHeader("Content-Type", "application/json");
-                request.timeout = 120;
                 yield return request.SendWebRequest();
+
+                if (ShouldFallBack(request))
+                {
+                    request.Dispose();
+                    request = NewPost(DirectEndpoint, bodyRaw, 120);
+                    yield return request.SendWebRequest();
+                    if (request.result == UnityWebRequest.Result.Success) SwitchToDirect();
+                }
 
                 if (request.result != UnityWebRequest.Result.Success)
                     Debug.LogWarning("[ROVR] Ollama warm-up failed: " + request.error);
@@ -88,16 +132,19 @@ namespace ROVR
             string body = BuildRequestJson(systemPrompt, userPrompt);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(body);
 
-            var request = new UnityWebRequest(Endpoint, "POST");
+            float sentAt = Time.realtimeSinceStartup;
+            var request = NewPost(Endpoint, bodyRaw, timeoutSeconds);
             try
             {
-                request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-                request.downloadHandler = new DownloadHandlerBuffer();
-                request.SetRequestHeader("Content-Type", "application/json");
-                request.timeout = timeoutSeconds;
-
-                float sentAt = Time.realtimeSinceStartup;
                 yield return request.SendWebRequest();
+
+                if (ShouldFallBack(request))
+                {
+                    request.Dispose();
+                    request = NewPost(DirectEndpoint, bodyRaw, timeoutSeconds);
+                    yield return request.SendWebRequest();
+                    if (request.result == UnityWebRequest.Result.Success) SwitchToDirect();
+                }
                 LastLatencySeconds = Time.realtimeSinceStartup - sentAt;
 
                 if (request.result != UnityWebRequest.Result.Success)
