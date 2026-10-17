@@ -70,6 +70,8 @@ public class VRControlPanel : MonoBehaviour
     private SpeechSegmenter _segmenter;
     private float[] _pendingPartial, _pendingSentence; // newest audio waiting for Whisper
     private bool _transcribing;
+    private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
+    private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
     private int _speechGeneration; // bumped on mute/unmute so results from before are dropped
 
     private CharacterController _controller;
@@ -236,6 +238,8 @@ public class VRControlPanel : MonoBehaviour
         if (_isMicMuted)
         {
             // Muted state
+            if (_transcribing) Record("MIC", "Muted while Whisper was still working: its result will be dropped");
+            _speechStarted = false;
             if (microphoneRecord.IsRecording) microphoneRecord.StopRecord();
             microphoneRecord.enabled = false;
 
@@ -321,8 +325,21 @@ public class VRControlPanel : MonoBehaviour
         if (_segmenter == null || _segmenter.SampleRate != frequency)
         {
             _segmenter = new SpeechSegmenter(frequency);
-            _segmenter.OnPartial += audio => QueueTranscription(audio, false);
-            _segmenter.OnSentence += audio => QueueTranscription(audio, true);
+            _segmenter.OnPartial += audio =>
+            {
+                if (!_speechStarted)
+                {
+                    _speechStarted = true;
+                    Record("SPEECH", "Started" + (_transcribing ? " (Whisper is still busy with earlier audio)" : ""));
+                }
+                QueueTranscription(audio, false);
+            };
+            _segmenter.OnSentence += audio =>
+            {
+                _speechStarted = false;
+                Record("SPEECH", $"Sentence ended: {Seconds(audio):F1} s, queued for Whisper" + (_transcribing ? " (Whisper is busy, it waits)" : ""));
+                QueueTranscription(audio, true);
+            };
         }
         _segmenter.DeadAirSec = deadAirSec;
         _segmenter.AddSamples(samples);
@@ -331,7 +348,12 @@ public class VRControlPanel : MonoBehaviour
     // Only the newest partial is worth transcribing; a finished sentence always is, and goes first.
     private void QueueTranscription(float[] audio, bool isSentence)
     {
-        if (isSentence) { _pendingSentence = audio; _pendingPartial = null; }
+        if (isSentence)
+        {
+            if (_pendingSentence != null)
+                Record("SKIPPED", $"A {Seconds(_pendingSentence):F1} s sentence was replaced by a newer one before Whisper could start on it (Whisper was busy)");
+            _pendingSentence = audio; _pendingPartial = null;
+        }
         else if (_pendingSentence == null) _pendingPartial = audio;
 
         if (!_transcribing) TranscribeQueued();
@@ -347,17 +369,47 @@ public class VRControlPanel : MonoBehaviour
             if (isSentence) _pendingSentence = null; else _pendingPartial = null;
             int generation = _speechGeneration;
 
+            string piece = isSentence ? "sentence" : "so-far piece";
             float whisperStarted = Time.realtimeSinceStartup;
-            WhisperResult result = await whisperManager.GetTextAsync(PadForWhisper(audio, _segmenter.SampleRate), _segmenter.SampleRate, 1);
+            WhisperResult result;
+            try
+            {
+                result = await whisperManager.GetTextAsync(PadForWhisper(audio, _segmenter.SampleRate), _segmenter.SampleRate, 1);
+            }
+            catch (System.Exception e)
+            {
+                if (this == null) return;
+                Debug.LogWarning("[Speech] Whisper failed: " + e);
+                Record("ERROR", $"Whisper failed on a {piece}: {e.Message}");
+                continue;
+            }
             float whisperSeconds = Time.realtimeSinceStartup - whisperStarted;
             if (this == null) return; // destroyed while Whisper was working
-            if (result == null || generation != _speechGeneration || _isMicMuted) continue;
+
+            // Say why a transcription isn't used, and flag slow ones, so the transcript shows what Whisper did.
+            if (result == null)
+            {
+                Record("WHISPER", $"Returned nothing for a {Seconds(audio):F1} s {piece} (after {whisperSeconds:F1} s)");
+                continue;
+            }
+            if (generation != _speechGeneration || _isMicMuted)
+            {
+                Record("DROPPED", $"{piece} \"{(result.Result ?? "").Trim()}\": finished {whisperSeconds:F1} s after it started, but the mic was muted in between");
+                continue;
+            }
+            if (!isSentence && whisperSeconds > SlowWhisperSec)
+                Record("WHISPER", $"Slow: a {Seconds(audio):F1} s so-far piece took {whisperSeconds:F1} s (\"{(result.Result ?? "").Trim()}\")");
 
             if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + (audio.Length / (float)_segmenter.SampleRate).ToString("F1") + " s): \"" + result.Result + "\"");
             if (isSentence) OnSentenceHeard(result.Result, audio.Length / (float)_segmenter.SampleRate, whisperSeconds);
             else OnPartialHeard(result.Result);
         }
         _transcribing = false;
+    }
+
+    private float Seconds(float[] audio)
+    {
+        return _segmenter != null && _segmenter.SampleRate > 0 ? audio.Length / (float)_segmenter.SampleRate : 0f;
     }
 
     // Whisper returns nothing for audio under 1 s, and a lone "stop" or "ops" is shorter than that,
@@ -529,6 +581,7 @@ public class VRControlPanel : MonoBehaviour
     private void HandleError(string error)
     {
         Debug.LogWarning("[LLM] " + error);
+        Record("ERROR", "LLM: " + error);
         // A model that was just started can take over 30 s to answer the first time, so a timeout isn't "not running".
         string message = error.Contains("Request timeout") ? "The language model is taking too long (still loading?). Please say that again."
             : error.StartsWith("Ollama request failed") ? "Can't reach the language model. Is Ollama running?"

@@ -136,7 +136,8 @@ class Bridge(BaseHTTPRequestHandler):
             kind, details = str(data.get("kind", "LOG")), str(data.get("details", ""))
         except ValueError:
             kind, details = "LOG", body.decode("utf-8", "replace")
-        colour = {"HEARD": BOLD, "PANEL": CYAN, "MIC": YELLOW}.get(kind, "")
+        colour = {"HEARD": BOLD, "PANEL": CYAN, "MIC": YELLOW, "SPEECH": GREY, "ERROR": RED,
+                  "DROPPED": YELLOW, "SKIPPED": YELLOW, "WHISPER": YELLOW}.get(kind, "")
         log(kind, details, colour)
         self._reply(200, b"{}")
 
