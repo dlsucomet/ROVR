@@ -60,3 +60,6 @@ crashlytics-build.properties
 
 # Local speech-to-text tools and models (600 MB); not part of the project
 /Voice Server/
+
+# Session transcripts (participants' speech)
+/[Tt]ranscripts/

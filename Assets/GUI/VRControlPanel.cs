@@ -20,6 +20,13 @@ public class VRControlPanel : MonoBehaviour
     [Tooltip("Log each command sent to the LLM (what was heard and the objects in view) and its reply.")]
     public bool logLLM;
 
+    [Header("Transcript")]
+    [Tooltip("Save a transcript of each Play session (buttons, teleports, what the mic heard, panel replies) " +
+             "to Transcripts/ in the project folder.")]
+    public bool saveTranscript = true;
+    [Tooltip("Also save the sentence-so-far captions while someone is still speaking (many lines).")]
+    public bool transcriptPartials;
+
     [Header("Voice Commands")]
     [Tooltip("On: every sentence goes to the LLM pipeline (Ollama must be running), which moves the player. " +
              "Off: only the fixed phrases \"move forward/backward/left/right\" work.")]
@@ -68,11 +75,19 @@ public class VRControlPanel : MonoBehaviour
     private OllamaClient _ollama;
     private VoiceCommandRouter _router;
 
+    private SessionTranscript _transcript;
+
     private void Start()
     {
         if (playerBody == null) playerBody = transform;
         _controller = playerBody.GetComponent<CharacterController>();
         if (vrCameraTransform == null && Camera.main != null) vrCameraTransform = Camera.main.transform;
+
+        if (saveTranscript)
+        {
+            _transcript = SessionTranscript.Begin();
+            Record("SESSION", "Started. Scene: " + gameObject.scene.name + ". Voice commands: " + (useLLM ? "LLM" : "fixed phrases") + ". Mic: muted");
+        }
 
         // In Start, not Awake: the pipeline takes the head camera from Camera.main, which the headset
         // camera may not have registered yet during Awake.
@@ -82,16 +97,16 @@ public class VRControlPanel : MonoBehaviour
         if (FindAnyObjectByType<MazeMinimap>() == null) gameObject.AddComponent<MazeMinimap>();
 
         // Force initial spawn rotation to plain destination facing 0 degrees Y
-        TeleportTo(plainDestination, 0f);
+        TeleportTo(plainDestination, 0f, "Plain", "at start");
 
         // Hook up button listeners with specific Y rotation constraints
-        if (plainButton != null) plainButton.onClick.AddListener(() => TeleportTo(plainDestination, 0f));
-        if (mazeButton != null) mazeButton.onClick.AddListener(() => TeleportTo(mazeDestination, 90f));
-        if (houseButton != null) houseButton.onClick.AddListener(() => TeleportTo(houseDestination, 0f));
+        if (plainButton != null) plainButton.onClick.AddListener(() => { Record("BUTTON", "Plain"); TeleportTo(plainDestination, 0f, "Plain", "button"); });
+        if (mazeButton != null) mazeButton.onClick.AddListener(() => { Record("BUTTON", "Maze"); TeleportTo(mazeDestination, 90f, "Maze", "button"); });
+        if (houseButton != null) houseButton.onClick.AddListener(() => { Record("BUTTON", "House"); TeleportTo(houseDestination, 0f, "House", "button"); });
 
-        if (slowButton != null) slowButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Slow));
-        if (normalButton != null) normalButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Normal));
-        if (fastButton != null) fastButton.onClick.AddListener(() => SetSpeed(SpeedLevel.Fast));
+        if (slowButton != null) slowButton.onClick.AddListener(() => { Record("BUTTON", "Slow"); SetSpeed(SpeedLevel.Slow); });
+        if (normalButton != null) normalButton.onClick.AddListener(() => { Record("BUTTON", "Normal"); SetSpeed(SpeedLevel.Normal); });
+        if (fastButton != null) fastButton.onClick.AddListener(() => { Record("BUTTON", "Fast"); SetSpeed(SpeedLevel.Fast); });
         ShowSpeed(SpeedLevel.Normal, false);
 
         // Questions can be longer than a line ("Which plant? Look at it..."): wrap, and shrink to fit the box.
@@ -154,7 +169,8 @@ public class VRControlPanel : MonoBehaviour
         }
     }
 
-    private void TeleportTo(Transform destination, float targetYRotation)
+    // world and reason are for the transcript only ("Maze", "button").
+    private void TeleportTo(Transform destination, float targetYRotation, string world, string reason)
     {
         if (destination != null)
         {
@@ -172,10 +188,13 @@ public class VRControlPanel : MonoBehaviour
             InputTracking.Recenter();
 
             Debug.Log($"<color=blue><b>[Teleport]</b> Moved player to {destination.name} facing {targetYRotation}° Y</color>");
+            Vector3 p = destination.position;
+            Record("TELEPORT", $"{world} ({reason}): to {destination.name} at ({p.x:0.##}, {p.y:0.##}, {p.z:0.##}), facing {targetYRotation}°");
         }
         else
         {
             Debug.LogWarning("[Teleport] Destination transform is not assigned!");
+            Record("TELEPORT", $"{world} ({reason}): failed, no destination assigned");
         }
     }
 
@@ -184,6 +203,7 @@ public class VRControlPanel : MonoBehaviour
         if (microphoneRecord == null || whisperManager == null) return;
 
         _isMicMuted = !_isMicMuted;
+        Record("BUTTON", _isMicMuted ? "Mute (mic off)" : "Unmute (mic on)");
         // A sentence cut off by muting must not carry over, and late transcriptions are dropped.
         _speechGeneration++;
         _pendingPartial = _pendingSentence = null;
@@ -292,6 +312,7 @@ public class VRControlPanel : MonoBehaviour
     {
         string soFar = TranscriptFilter.Clean(text);
         if (soFar != null && subtitlesText != null) subtitlesText.text = soFar.ToLower() + " ...";
+        if (transcriptPartials && soFar != null) Record("SO FAR", soFar.ToLower() + " ...");
 
         if (useLLM && _router != null) _router.OnPartial(text);
     }
@@ -301,6 +322,9 @@ public class VRControlPanel : MonoBehaviour
     {
         // Drops Whisper's notes for non-speech ("[BLANK_AUDIO]") and the stock phrases it invents from noise ("Thank you.").
         string spokenText = TranscriptFilter.Clean(text);
+        Record("HEARD", spokenText != null
+            ? "\"" + spokenText.ToLower() + "\"  (Whisper: \"" + (text ?? "").Trim() + "\")"
+            : "ignored as noise  (Whisper: \"" + (text ?? "").Trim() + "\")");
         if (spokenText != null)
         {
             spokenText = spokenText.ToLower();
@@ -389,6 +413,7 @@ public class VRControlPanel : MonoBehaviour
 
     private void HaltFromVoice()
     {
+        Record("HALT", "Halt word heard while speaking");
         _resolver.HaltNow();
         SetOutputFeedback("Stopped", true);
     }
@@ -523,6 +548,7 @@ public class VRControlPanel : MonoBehaviour
 
     private void SetOutputFeedback(string message, Color color)
     {
+        if (message != "...") Record("PANEL", message); // "..." is just "waiting on the LLM"
         if (outputText != null)
         {
             outputText.text = message;
@@ -551,8 +577,17 @@ public class VRControlPanel : MonoBehaviour
         }
     }
 
+    // One transcript line. Does nothing when saveTranscript is off.
+    private void Record(string kind, string details)
+    {
+        _transcript?.Log(kind, details);
+    }
+
     private void OnDestroy()
     {
+        _transcript?.End();
+        _transcript = null;
+
         if (_resolver != null)
         {
             _resolver.OnCommandResolved -= HandleCommandResolved;
