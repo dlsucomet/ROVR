@@ -4,6 +4,9 @@ using UnityEngine.XR;
 using Whisper;
 using Whisper.Utils;
 using ROVR;
+#if UNITY_ANDROID && !UNITY_EDITOR
+using UnityEngine.Android;
+#endif
 
 public class VRControlPanel : MonoBehaviour
 {
@@ -144,12 +147,17 @@ public class VRControlPanel : MonoBehaviour
             microphoneRecord.enabled = false;
         }
 
+        // On the headset (Android) the microphone needs the user's permission, asked at run time.
+        // Without it the mic records silence, so nothing is ever transcribed. Ask once at start.
+        RequestMicPermission();
+
         ClearUI();
     }
 
     private void Update()
     {
         if (_ollama != null) _ollama.LogExchanges = logLLM;
+        HandleMicPermissionAnswer();
 
         // Handle Command Cooldown Timer
         if (_commandCooldown > 0f)
@@ -202,6 +210,15 @@ public class VRControlPanel : MonoBehaviour
     {
         if (microphoneRecord == null || whisperManager == null) return;
 
+        // Unmuting without microphone permission would only record silence: ask again instead.
+        if (_isMicMuted && !HasMicPermission())
+        {
+            Record("BUTTON", "Unmute (no microphone permission yet, asking)");
+            SetOutputFeedback("Please allow microphone access, then press Unmute again.", Color.yellow);
+            RequestMicPermission();
+            return;
+        }
+
         _isMicMuted = !_isMicMuted;
         Record("BUTTON", _isMicMuted ? "Mute (mic off)" : "Unmute (mic on)");
         // A sentence cut off by muting must not carry over, and late transcriptions are dropped.
@@ -227,7 +244,59 @@ public class VRControlPanel : MonoBehaviour
             microphoneRecord.StartRecord();
 
             if (micButtonText != null) micButtonText.text = "Mute";
-            Debug.Log("<color=green><b>[Mic Unmuted]</b> Listening continuously...</color>");
+            string devices = Microphone.devices.Length == 0 ? "none found" : string.Join(", ", Microphone.devices);
+            Debug.Log("<color=green><b>[Mic Unmuted]</b> Listening continuously...</color> Microphones: " + devices
+                      + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded);
+            Record("MIC", "Microphones: " + devices + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded);
+        }
+    }
+
+    // ---------- Microphone permission (Android / Quest) ----------
+
+    private static bool HasMicPermission()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        return Permission.HasUserAuthorizedPermission(Permission.Microphone);
+#else
+        return true;
+#endif
+    }
+
+    private void RequestMicPermission()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (Permission.HasUserAuthorizedPermission(Permission.Microphone))
+        {
+            Record("MIC", "Microphone permission: granted");
+            return;
+        }
+
+        // The answer can arrive on an Android thread, so it is only noted here and handled in Update.
+        var callbacks = new PermissionCallbacks();
+        callbacks.PermissionGranted += _ => _micPermissionAnswer = 1;
+        callbacks.PermissionDenied += _ => _micPermissionAnswer = 2;
+        Permission.RequestUserPermission(Permission.Microphone, callbacks);
+#endif
+    }
+
+    private volatile int _micPermissionAnswer; // 0 = none yet, 1 = granted, 2 = denied
+
+    private void HandleMicPermissionAnswer()
+    {
+        int answer = _micPermissionAnswer;
+        if (answer == 0) return;
+        _micPermissionAnswer = 0;
+
+        if (answer == 1)
+        {
+            Debug.Log("[Mic] Permission granted");
+            Record("MIC", "Microphone permission: granted by the user");
+        }
+        else
+        {
+            Debug.LogWarning("[Mic] Permission denied");
+            Record("MIC", "Microphone permission: denied");
+            SetOutputFeedback("Microphone access was denied. Allow it in the headset's settings to use voice.", Color.red);
         }
     }
 
