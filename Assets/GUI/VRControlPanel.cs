@@ -35,6 +35,9 @@ public class VRControlPanel : MonoBehaviour
              "transcript lines are shown live in its terminal. On the headset over the USB cable this stays " +
              "127.0.0.1 (the build hook links the port); over Wi-Fi use the PC's IP. Empty = talk to Ollama directly.")]
     public string bridgeUrl = "http://127.0.0.1:8765";
+    [Tooltip("Turn speech into text on the PC, through the bridge (about 0.3 s a sentence), instead of on the headset " +
+             "(14-17 s on a Quest). Whenever the bridge or its Whisper isn't there, the headset (or the Editor) does it itself.")]
+    public bool transcribeOnPC = true;
 
     [Header("Voice Commands")]
     [Tooltip("On: every sentence goes to the LLM pipeline (Ollama must be running), which moves the player. " +
@@ -66,9 +69,11 @@ public class VRControlPanel : MonoBehaviour
     private bool _isMicMuted = true; // Default is muted/off until pressed
     private Text micButtonText;
 
-    // Speech: microphone audio -> sentences (SpeechSegmenter) -> text (Whisper), one transcription at a time
+    // Speech: microphone audio -> sentences (SpeechSegmenter) -> text (Whisper on the PC, or here), one transcription at a time
     private SpeechSegmenter _segmenter;
-    private float[] _pendingPartial, _pendingSentence; // newest audio waiting for Whisper
+    private readonly System.Collections.Generic.Queue<float[]> _pendingSentences = new System.Collections.Generic.Queue<float[]>();
+    private float[] _pendingPartial; // the newest sentence-so-far waiting for Whisper
+    private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
@@ -148,6 +153,16 @@ public class VRControlPanel : MonoBehaviour
             microphoneRecord.useVad = false;
             microphoneRecord.chunksLengthSec = 0.1f;
             microphoneRecord.OnChunkReady += OnMicChunk;
+
+            if (transcribeOnPC && !string.IsNullOrEmpty(bridgeUrl))
+            {
+                _pcSpeech = GetComponent<PCSpeechToText>();
+                if (_pcSpeech == null) _pcSpeech = gameObject.AddComponent<PCSpeechToText>();
+                _pcSpeech.OnReadyChanged += (ready, whyNot) => Record("STT", ready
+                    ? "Speech to text: on the PC, through the bridge"
+                    : "Speech to text: " + LocalWhisper + ", because " + whyNot + ". The PC is asked again every " + PCSpeechToText.RetrySec + " s");
+                _pcSpeech.Connect(bridgeUrl);
+            }
         }
 
         // Ensure mic starts disabled based on requirements
@@ -232,7 +247,8 @@ public class VRControlPanel : MonoBehaviour
         Record("BUTTON", _isMicMuted ? "Mute (mic off)" : "Unmute (mic on)");
         // A sentence cut off by muting must not carry over, and late transcriptions are dropped.
         _speechGeneration++;
-        _pendingPartial = _pendingSentence = null;
+        _pendingSentences.Clear();
+        _pendingPartial = null;
         _segmenter?.Reset();
 
         if (_isMicMuted)
@@ -256,9 +272,10 @@ public class VRControlPanel : MonoBehaviour
 
             if (micButtonText != null) micButtonText.text = "Mute";
             string devices = Microphone.devices.Length == 0 ? "none found" : string.Join(", ", Microphone.devices);
+            string stt = _pcSpeech != null && _pcSpeech.Ready ? "on the PC" : LocalWhisper;
             Debug.Log("<color=green><b>[Mic Unmuted]</b> Listening continuously...</color> Microphones: " + devices
-                      + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded);
-            Record("MIC", "Microphones: " + devices + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded);
+                      + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded + ". Speech to text: " + stt);
+            Record("MIC", "Microphones: " + devices + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded + ". Speech to text: " + stt);
         }
     }
 
@@ -345,64 +362,85 @@ public class VRControlPanel : MonoBehaviour
         _segmenter.AddSamples(samples);
     }
 
-    // Only the newest partial is worth transcribing; a finished sentence always is, and goes first.
+    // Every finished sentence is transcribed, in the order spoken. Of the sentence-so-far pieces only the
+    // newest is worth it, and only while no finished sentence is waiting.
     private void QueueTranscription(float[] audio, bool isSentence)
     {
         if (isSentence)
         {
-            if (_pendingSentence != null)
-                Record("SKIPPED", $"A {Seconds(_pendingSentence):F1} s sentence was replaced by a newer one before Whisper could start on it (Whisper was busy)");
-            _pendingSentence = audio; _pendingPartial = null;
+            _pendingSentences.Enqueue(audio);
+            _pendingPartial = null;
         }
-        else if (_pendingSentence == null) _pendingPartial = audio;
+        else if (_pendingSentences.Count == 0) _pendingPartial = audio;
 
         if (!_transcribing) TranscribeQueued();
     }
 
+    // Where Whisper runs when it isn't on the PC (for the transcript).
+    private static string LocalWhisper => Application.isEditor ? "in Unity on this PC" : "on the headset";
+
     private async void TranscribeQueued()
     {
         _transcribing = true;
-        while (_pendingSentence != null || _pendingPartial != null)
+        while (_pendingSentences.Count > 0 || _pendingPartial != null)
         {
-            bool isSentence = _pendingSentence != null;
-            float[] audio = isSentence ? _pendingSentence : _pendingPartial;
-            if (isSentence) _pendingSentence = null; else _pendingPartial = null;
+            bool isSentence = _pendingSentences.Count > 0;
+            float[] audio = isSentence ? _pendingSentences.Dequeue() : _pendingPartial;
+            if (!isSentence) _pendingPartial = null;
             int generation = _speechGeneration;
+            int sampleRate = _segmenter.SampleRate;
+            float[] padded = PadForWhisper(audio, sampleRate);
 
             string piece = isSentence ? "sentence" : "so-far piece";
             float whisperStarted = Time.realtimeSinceStartup;
-            WhisperResult result;
-            try
+            string text = null;
+            string where = "on the PC";
+
+            // On the PC when it can (fast); otherwise, or if it fails, here.
+            if (_pcSpeech != null && _pcSpeech.Ready)
             {
-                result = await whisperManager.GetTextAsync(PadForWhisper(audio, _segmenter.SampleRate), _segmenter.SampleRate, 1);
+                text = await _pcSpeech.TranscribeAsync(padded, sampleRate, isSentence);
+                if (this == null) return; // destroyed while waiting for the PC
+                if (text == null)
+                    Record("WHISPER", $"The PC couldn't transcribe a {piece}, so it's done {LocalWhisper} ({_pcSpeech.WhyNot})");
             }
-            catch (System.Exception e)
+            if (text == null)
             {
-                if (this == null) return;
-                Debug.LogWarning("[Speech] Whisper failed: " + e);
-                Record("ERROR", $"Whisper failed on a {piece}: {e.Message}");
-                continue;
+                where = LocalWhisper;
+                WhisperResult result;
+                try
+                {
+                    result = await whisperManager.GetTextAsync(padded, sampleRate, 1);
+                }
+                catch (System.Exception e)
+                {
+                    if (this == null) return;
+                    Debug.LogWarning("[Speech] Whisper failed: " + e);
+                    Record("ERROR", $"Whisper failed on a {piece}: {e.Message}");
+                    continue;
+                }
+                if (this == null) return; // destroyed while Whisper was working
+                if (result == null)
+                {
+                    Record("WHISPER", $"Returned nothing for a {Seconds(audio):F1} s {piece} (after {Time.realtimeSinceStartup - whisperStarted:F1} s)");
+                    continue;
+                }
+                text = result.Result;
             }
             float whisperSeconds = Time.realtimeSinceStartup - whisperStarted;
-            if (this == null) return; // destroyed while Whisper was working
 
             // Say why a transcription isn't used, and flag slow ones, so the transcript shows what Whisper did.
-            if (result == null)
-            {
-                Record("WHISPER", $"Returned nothing for a {Seconds(audio):F1} s {piece} (after {whisperSeconds:F1} s)");
-                continue;
-            }
             if (generation != _speechGeneration || _isMicMuted)
             {
-                Record("DROPPED", $"{piece} \"{(result.Result ?? "").Trim()}\": finished {whisperSeconds:F1} s after it started, but the mic was muted in between");
+                Record("DROPPED", $"{piece} \"{(text ?? "").Trim()}\": finished {whisperSeconds:F1} s after it started, but the mic was muted in between");
                 continue;
             }
             if (!isSentence && whisperSeconds > SlowWhisperSec)
-                Record("WHISPER", $"Slow: a {Seconds(audio):F1} s so-far piece took {whisperSeconds:F1} s (\"{(result.Result ?? "").Trim()}\")");
+                Record("WHISPER", $"Slow: a {Seconds(audio):F1} s so-far piece took {whisperSeconds:F1} s {where} (\"{(text ?? "").Trim()}\")");
 
-            if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + (audio.Length / (float)_segmenter.SampleRate).ToString("F1") + " s): \"" + result.Result + "\"");
-            if (isSentence) OnSentenceHeard(result.Result, audio.Length / (float)_segmenter.SampleRate, whisperSeconds);
-            else OnPartialHeard(result.Result);
+            if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + Seconds(audio).ToString("F1") + " s, " + where + "): \"" + text + "\"");
+            if (isSentence) OnSentenceHeard(text, Seconds(audio), whisperSeconds, where);
+            else OnPartialHeard(text);
         }
         _transcribing = false;
     }
@@ -448,12 +486,12 @@ public class VRControlPanel : MonoBehaviour
     }
 
     // A finished sentence (it ended with deadAirSec of silence).
-    // speechSeconds / whisperSeconds: how long the sentence was, and how long Whisper took (for the transcript).
-    private void OnSentenceHeard(string text, float speechSeconds = -1f, float whisperSeconds = -1f)
+    // speechSeconds / whisperSeconds / where: how long the sentence was, how long Whisper took and where it ran (for the transcript).
+    private void OnSentenceHeard(string text, float speechSeconds = -1f, float whisperSeconds = -1f, string where = null)
     {
         // Drops Whisper's notes for non-speech ("[BLANK_AUDIO]") and the stock phrases it invents from noise ("Thank you.").
         string spokenText = TranscriptFilter.Clean(text);
-        string timing = whisperSeconds >= 0f ? $"  [{speechSeconds:F1} s of speech, transcribed in {whisperSeconds:F2} s]" : "";
+        string timing = whisperSeconds >= 0f ? $"  [{speechSeconds:F1} s of speech, transcribed in {whisperSeconds:F2} s{(where != null ? " " + where : "")}]" : "";
         Record("HEARD", (spokenText != null
             ? "\"" + spokenText.ToLower() + "\"  (Whisper: \"" + (text ?? "").Trim() + "\")"
             : "ignored as noise  (Whisper: \"" + (text ?? "").Trim() + "\")") + timing);

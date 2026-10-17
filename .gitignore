@@ -66,3 +66,6 @@ crashlytics-build.properties
 
 # Bridge session logs (participants' speech)
 /Bridge/logs/
+
+# whisper.cpp's server program for the bridge (downloaded by each of us, see Bridge/rovr_bridge.py)
+/Bridge/whisper/
