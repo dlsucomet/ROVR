@@ -13,8 +13,13 @@
 
 Only the Python standard library is used. Run from the project folder:
 
-    python Bridge/rovr_bridge.py                 # cable (adb reverse) or Unity Editor on this PC
-    python Bridge/rovr_bridge.py --host 0.0.0.0  # also reachable over Wi-Fi (other devices)
+    python Bridge/rovr_bridge.py         # cable (adb reverse) or Unity Editor on this PC
+    python Bridge/rovr_bridge.py --wifi  # also over Wi-Fi: the headset finds this PC by itself
+
+With --wifi the headset can be on the same network instead of the cable. It broadcasts "ROVR-BRIDGE?"
+(UDP, port 8765) and the bridge answers, so the PC's address never has to be typed in. Anyone on the
+same network could then reach the bridge, so use it on your own Wi-Fi or a phone hotspot, not a shared
+one. Only local-network addresses are let in (not the internet, not VPNs such as Radmin).
 
 Speech to text needs whisper.cpp's server program, which isn't in git: download whisper-bin-x64.zip
 from https://github.com/ggml-org/whisper.cpp/releases and unzip it into Bridge/whisper/. Without it
@@ -26,8 +31,10 @@ Ollama and the Whisper server stay on 127.0.0.1: only the bridge's port is ever 
 import argparse
 import datetime
 import io
+import ipaddress
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -36,7 +43,7 @@ import urllib.request
 import uuid
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock
+from threading import Lock, Thread
 
 # ---- terminal output ----------------------------------------------------------------------
 
@@ -207,6 +214,46 @@ def wav_seconds(body):
         return None
 
 
+# ---- Wi-Fi: the headset finds this PC by itself (--wifi) ----------------------------------
+
+DISCOVERY_QUESTION = b"ROVR-BRIDGE?"  # what BridgeLink.cs broadcasts
+
+
+def on_local_network(ip):
+    """This PC, or a device on a home/lab network (192.168.x, 10.x, 172.16-31.x). Not the internet or a VPN."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
+
+
+def lan_addresses():
+    """This PC's addresses on local networks, for the startup message."""
+    try:
+        found = {info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
+    except OSError:
+        found = set()
+    return sorted(a for a in found if on_local_network(a) and not ipaddress.ip_address(a).is_loopback)
+
+
+def answer_headsets(sock, port):
+    """Answers each "ROVR-BRIDGE?" broadcast on sock (UDP) with the bridge's port and the PC's name. A thread."""
+    reply = json.dumps({"rovr_bridge": 1, "port": port, "pc": socket.gethostname()}).encode()
+    last_logged = {}  # ip -> time; one search sends several broadcasts, so print it once
+    while True:
+        try:
+            question, (ip, their_port) = sock.recvfrom(256)
+        except OSError:
+            continue  # on Windows, an earlier reply that bounced shows up here; harmless
+        if question.strip() != DISCOVERY_QUESTION or not on_local_network(ip):
+            continue
+        sock.sendto(reply, (ip, their_port))
+        if time.time() - last_logged.get(ip, 0) > 5:
+            log("WI-FI", f"found by {ip}", GREEN)
+        last_logged[ip] = time.time()
+
+
 # ---- the server ---------------------------------------------------------------------------
 
 class Bridge(BaseHTTPRequestHandler):
@@ -227,8 +274,21 @@ class Bridge(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(length) if length else b""
 
+    # With --wifi the bridge listens on the network: only this PC and local-network devices get in.
+    def _allowed(self):
+        if on_local_network(self.client_address[0]):
+            return True
+        self.close_connection = True
+        self._reply(403, b"only devices on the local network", "text/plain")
+        return False
+
     def do_GET(self):
-        if self.path == "/health":
+        if not self._allowed():
+            return
+        if self.path == "/ping":
+            # BridgeLink.cs checks with this that it found a ROVR bridge, and that it still answers.
+            self._reply(200, ("rovr-bridge " + socket.gethostname()).encode(), "text/plain")
+        elif self.path == "/health":
             ok = self._ollama_up()
             self._reply(200 if ok else 503, b"ok" if ok else b"ollama not reachable", "text/plain")
         elif self.path == "/transcribe":
@@ -241,7 +301,9 @@ class Bridge(BaseHTTPRequestHandler):
             self._reply(404, b"not found", "text/plain")
 
     def do_POST(self):
-        body = self._body()
+        body = self._body()  # read even when refusing, so the connection stays in step
+        if not self._allowed():
+            return
         if self.path == "/log":
             self._log_line(body)
         elif self.path.split("?")[0] == "/transcribe":
@@ -342,7 +404,9 @@ def response_type(body):
 def main():
     global _log_file
     parser = argparse.ArgumentParser(description="ROVR bridge between the headset and Ollama")
-    parser.add_argument("--host", default="127.0.0.1", help="127.0.0.1 = this PC and the cable only; 0.0.0.0 = also Wi-Fi")
+    parser.add_argument("--wifi", action="store_true",
+                        help="also over Wi-Fi: listen on the network and answer the headset's search for this PC")
+    parser.add_argument("--host", help="the address to listen on (default 127.0.0.1, or 0.0.0.0 with --wifi)")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--ollama", default="http://127.0.0.1:11434", help="where Ollama is")
     parser.add_argument("--whisper", help="whisper.cpp's whisper-server program (default: looks in Bridge/whisper/)")
@@ -351,6 +415,8 @@ def main():
     parser.add_argument("--whisper-port", type=int, default=8766, help="the Whisper server's port, on 127.0.0.1 only")
     parser.add_argument("--no-whisper", action="store_true", help="no speech to text here: the headset transcribes by itself")
     args = parser.parse_args()
+    if args.host is None:
+        args.host = "0.0.0.0" if args.wifi else "127.0.0.1"
 
     Bridge.ollama = args.ollama.rstrip("/")
 
@@ -362,6 +428,10 @@ def main():
 
     try:
         server = ThreadingHTTPServer((args.host, args.port), Bridge)
+        if args.wifi:
+            finder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            finder.bind(("0.0.0.0", args.port))  # UDP; same number as the bridge's TCP port
+            Thread(target=answer_headsets, args=(finder, args.port), daemon=True).start()
     except OSError as e:
         print(f"{RED}Can't listen on {args.host}:{args.port}: {e}{RESET}")
         print("Is the bridge already running in another terminal?")
@@ -382,6 +452,15 @@ def main():
     else:
         print(f"Speech to text: {YELLOW}not on this PC, {Whisper.why_not}.{RESET}\n"
               f"  The headset transcribes by itself instead (slow on a Quest: about 15 s a sentence).")
+    if args.wifi:
+        addresses = lan_addresses()
+        if addresses:
+            print(f"Wi-Fi: {GREEN}on{RESET}. A headset on the same network finds this PC by itself "
+                  f"(this PC: {', '.join('http://%s:%d' % (a, args.port) for a in addresses)}).")
+        else:
+            print(f"Wi-Fi: {YELLOW}on, but this PC has no local-network address. Is it connected?{RESET}")
+    else:
+        print(f"Wi-Fi: off (cable and this PC only). For a headset on Wi-Fi: run_bridge_wifi.bat, or --wifi.")
     print(f"{GREY}Ctrl+C to stop.{RESET}\n")
 
     try:

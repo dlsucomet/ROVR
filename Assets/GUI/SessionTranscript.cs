@@ -32,7 +32,9 @@ public class SessionTranscript
     // Also send each line to the bridge's /log, e.g. "http://127.0.0.1:8765/log".
     public void SendTo(string url)
     {
-        _bridgeLogUrl = string.IsNullOrEmpty(url) ? null : url;
+        string next = string.IsNullOrEmpty(url) ? null : url;
+        if (next != _bridgeLogUrl) _bridgeRetryAt = 0f; // a new address (cable <-> Wi-Fi) gets the next line at once
+        _bridgeLogUrl = next;
     }
 
     // Opens a new transcript file. Returns null (with a warning) if the file can't be created,

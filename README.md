@@ -99,11 +99,20 @@ The headset runs the app. The PC runs Ollama and the speech to text. They talk o
 
 Without step 1 the bridge still works, but the headset transcribes by itself, at about 15 s a sentence. The panel's **Transcribe On PC** setting turns this off.
 
+**Without the cable (Wi-Fi)**
+
+1. Put the headset on the same network as the PC. Use your own Wi-Fi or a phone hotspot, not a shared network: anyone on the network could reach the bridge.
+2. Run `Bridge/run_bridge_wifi.bat`, or use **Tools > ROVR > Start Bridge (Wi-Fi)**. It should say `Wi-Fi: on`.
+3. Start ROVR on the headset. It finds the PC by itself. The panel says `Connected to the PC over Wi-Fi`, and the bridge window shows `WI-FI found by <the headset's address>`.
+
+The cable still works with the Wi-Fi bridge, and the app moves between the two on its own. Installing a new build still needs the cable. On battery a Quest 3S lasts about 2 hours.
+
 ## Troubleshooting
 
 - **No `Tools > ROVR` menu:** the environment scripts must be in a folder named exactly `Editor`.
 - **"Can't reach the language model":** check that Ollama is running and `ollama list` shows the model.
 - **"The language model is taking too long":** Ollama was still loading the model. Say it again after a few seconds.
 - **Nothing happens when you speak:** press Unmute first; the mic starts muted.
+- **"Can't find the PC" on the headset:** start the bridge with Wi-Fi (`Bridge/run_bridge_wifi.bat`), and check that the headset and the PC are on the same network. Windows Firewall must allow Python; it asks the first time.
 - **On the headset, about 15 s pass before anything happens:** it is transcribing by itself. Check that the bridge window says `Speech to text: whisper.cpp on this PC`, and that the headset is linked (run `Bridge/run_bridge.bat` again after replugging it).
 - **Walks through walls:** the player must move via `CharacterController.Move`, not by setting its position.

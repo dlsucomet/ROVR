@@ -17,7 +17,7 @@ namespace ROVR
 {
     public class PCSpeechToText : MonoBehaviour
     {
-        public const float RetrySec = 5f;
+        public const float RetrySec = 2f;
         const int TimeoutSec = 10; // a 15 s sentence takes well under 1 s on the PC
 
         string _url;
@@ -33,12 +33,15 @@ namespace ROVR
         // Ready changed: (ready, why not).
         public event Action<bool, string> OnReadyChanged;
 
-        // "http://127.0.0.1:8765", the bridge.
+        // "http://127.0.0.1:8765", the bridge. A new address (cable <-> Wi-Fi) is asked right away.
         public void Connect(string bridgeUrl)
         {
-            _url = bridgeUrl.TrimEnd('/') + "/transcribe";
+            string url = bridgeUrl.TrimEnd('/') + "/transcribe";
+            if (url == _url) return;
+            _url = url;
             StopProbe();
-            _probeAt = 0f; // ask the new address right away
+            _probeAt = 0f;
+            if (Ready) SetReady(false, "the bridge moved to " + bridgeUrl.TrimEnd('/') + " (checking it)");
         }
 
         void StopProbe()

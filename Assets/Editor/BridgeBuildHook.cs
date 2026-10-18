@@ -28,12 +28,18 @@ public class BridgeBuildHook : IPostprocessBuildWithReport
     }
 
     [MenuItem("Tools/ROVR/Start Bridge")]
-    public static void StartBridge()
+    public static void StartBridge() => StartBridge(false);
+
+    // For a headset on Wi-Fi: the bridge also listens on the network, and the headset finds this PC by itself.
+    [MenuItem("Tools/ROVR/Start Bridge (Wi-Fi)")]
+    public static void StartBridgeWifi() => StartBridge(true);
+
+    static void StartBridge(bool wifi)
     {
         try
         {
             LinkHeadset();
-            OpenBridgeWindow();
+            OpenBridgeWindow(wifi);
         }
         catch (Exception e)
         {
@@ -59,11 +65,11 @@ public class BridgeBuildHook : IPostprocessBuildWithReport
                              "Plug it in, accept \"Allow USB debugging\" in the headset, then use Tools > ROVR > Start Bridge.");
     }
 
-    static void OpenBridgeWindow()
+    static void OpenBridgeWindow(bool wifi = false)
     {
         if (PortInUse(BridgePort))
         {
-            Debug.Log($"[ROVR Bridge] Already running on port {BridgePort}.");
+            Debug.Log($"[ROVR Bridge] Already running on port {BridgePort}." + (wifi ? " For Wi-Fi it must have been started with Wi-Fi on: close it and try again." : ""));
             return;
         }
 
@@ -79,7 +85,7 @@ public class BridgeBuildHook : IPostprocessBuildWithReport
         Process.Start(new ProcessStartInfo
         {
             FileName = "cmd.exe",
-            Arguments = $"/k title ROVR bridge && python \"{script}\" --port {BridgePort}",
+            Arguments = $"/k title ROVR bridge && python \"{script}\" --port {BridgePort}" + (wifi ? " --wifi" : ""),
             WorkingDirectory = projectRoot,
             UseShellExecute = true,
         });

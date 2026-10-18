@@ -33,8 +33,12 @@ public class VRControlPanel : MonoBehaviour
     [Header("Bridge (PC)")]
     [Tooltip("The ROVR bridge on the PC (Bridge/rovr_bridge.py). LLM commands go through it to Ollama, and " +
              "transcript lines are shown live in its terminal. On the headset over the USB cable this stays " +
-             "127.0.0.1 (the build hook links the port); over Wi-Fi use the PC's IP. Empty = talk to Ollama directly.")]
+             "127.0.0.1 (the build hook links the port); over Wi-Fi the headset finds the PC by itself (Find Bridge On Wifi). " +
+             "Empty = talk to Ollama directly.")]
     public string bridgeUrl = "http://127.0.0.1:8765";
+    [Tooltip("On the headset: when the bridge doesn't answer at Bridge Url (no cable), find it on the Wi-Fi network. Start it " +
+             "with Bridge/run_bridge_wifi.bat; the headset must be on the same network. Not in the Editor, where the bridge is on this PC.")]
+    public bool findBridgeOnWifi = true;
     [Tooltip("Turn speech into text on the PC, through the bridge (about 0.3 s a sentence), instead of on the headset " +
              "(14-17 s on a Quest). Whenever the bridge or its Whisper isn't there, the headset (or the Editor) does it itself.")]
     public bool transcribeOnPC = true;
@@ -74,6 +78,7 @@ public class VRControlPanel : MonoBehaviour
     private readonly System.Collections.Generic.Queue<float[]> _pendingSentences = new System.Collections.Generic.Queue<float[]>();
     private float[] _pendingPartial; // the newest sentence-so-far waiting for Whisper
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
+    private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
@@ -104,6 +109,15 @@ public class VRControlPanel : MonoBehaviour
             _transcript = SessionTranscript.Begin();
             if (_transcript != null && !string.IsNullOrEmpty(bridgeUrl)) _transcript.SendTo(bridgeUrl.TrimEnd('/') + "/log");
             Record("SESSION", "Started. Scene: " + gameObject.scene.name + ". Voice commands: " + (useLLM ? "LLM" : "fixed phrases") + ". Mic: muted");
+        }
+
+        // Where the bridge is, over the cable or on Wi-Fi; everything that talks to it follows (OnBridgeChanged).
+        if (!string.IsNullOrEmpty(bridgeUrl))
+        {
+            _bridge = GetComponent<BridgeLink>();
+            if (_bridge == null) _bridge = gameObject.AddComponent<BridgeLink>();
+            _bridge.OnChanged += OnBridgeChanged;
+            _bridge.Begin(bridgeUrl, findBridgeOnWifi && !Application.isEditor);
         }
 
         // In Start, not Awake: the pipeline takes the head camera from Camera.main, which the headset
@@ -161,7 +175,7 @@ public class VRControlPanel : MonoBehaviour
                 _pcSpeech.OnReadyChanged += (ready, whyNot) => Record("STT", ready
                     ? "Speech to text: on the PC, through the bridge"
                     : "Speech to text: " + LocalWhisper + ", because " + whyNot + ". The PC is asked again every " + PCSpeechToText.RetrySec + " s");
-                _pcSpeech.Connect(bridgeUrl);
+                _pcSpeech.Connect(BridgeNow);
             }
         }
 
@@ -277,6 +291,30 @@ public class VRControlPanel : MonoBehaviour
                       + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded + ". Speech to text: " + stt);
             Record("MIC", "Microphones: " + devices + ". Recording: " + microphoneRecord.IsRecording + ". Whisper model loaded: " + whisperManager.IsLoaded + ". Speech to text: " + stt);
         }
+    }
+
+    // ---------- The bridge on the PC (cable or Wi-Fi) ----------
+
+    // The bridge in use: the one BridgeLink found, else Bridge Url (the cable, or this PC in the Editor).
+    private string BridgeNow => _bridge != null && _bridge.Url != null ? _bridge.Url : bridgeUrl.TrimEnd('/');
+
+    // The bridge was found, moved (cable <-> Wi-Fi) or lost: point the LLM, the speech and the transcript at it.
+    private void OnBridgeChanged(string url)
+    {
+        if (url == null)
+        {
+            Record("BRIDGE", "Lost the PC. Looking for it again");
+            if (!Application.isEditor) SetOutputFeedback("Lost the connection to the PC. Looking for it...", Color.yellow);
+            return;
+        }
+
+        string how = _bridge.OverWifi ? "over Wi-Fi" : Application.isEditor ? "on this PC" : "over the cable";
+        _transcript?.SendTo(url + "/log"); // first, so the bridge also gets the line below
+        Debug.Log($"[Bridge] Connected to the PC ({_bridge.PcName}) {how}: {url}");
+        Record("BRIDGE", $"Connected to the PC ({_bridge.PcName}) {how}: {url}");
+        if (_ollama != null) _ollama.UseEndpoint(url + "/api/chat");
+        if (_pcSpeech != null) _pcSpeech.Connect(url);
+        if (!Application.isEditor) SetOutputFeedback("Connected to the PC " + how, Color.white);
     }
 
     // ---------- Microphone permission (Android / Quest) ----------
@@ -395,6 +433,19 @@ public class VRControlPanel : MonoBehaviour
             float whisperStarted = Time.realtimeSinceStartup;
             string text = null;
             string where = "on the PC";
+
+            // The headset's own Whisper takes about 15 s. Worth it for a finished sentence the PC can't do,
+            // never for the sentence so far (live caption, early halt): it would hold up everything behind it.
+            if (Application.isMobilePlatform && !(_pcSpeech != null && _pcSpeech.Ready))
+            {
+                if (!isSentence) continue;
+                // Connected, but the PC's speech to text isn't ready this moment (e.g. just moved between
+                // cable and Wi-Fi): give it a moment before falling back.
+                float waitUntil = Time.realtimeSinceStartup + 2f;
+                while (_pcSpeech != null && !_pcSpeech.Ready && _bridge != null && _bridge.Url != null && Time.realtimeSinceStartup < waitUntil)
+                    await System.Threading.Tasks.Task.Delay(50);
+                if (this == null) return;
+            }
 
             // On the PC when it can (fast); otherwise, or if it fails, here.
             if (_pcSpeech != null && _pcSpeech.Ready)
@@ -531,7 +582,7 @@ public class VRControlPanel : MonoBehaviour
         _grounding = GetOrAdd<FOVMetadataGrounding>();
         GetOrAdd<NavigationController>();
         _ollama = GetOrAdd<OllamaClient>();
-        if (!string.IsNullOrEmpty(bridgeUrl)) _ollama.UseEndpoint(bridgeUrl.TrimEnd('/') + "/api/chat");
+        if (!string.IsNullOrEmpty(bridgeUrl)) _ollama.UseEndpoint(BridgeNow + "/api/chat");
         _ollama.OnLatency += seconds => Record("LLM", "Answered in " + seconds.ToString("F2") + " s");
         _resolver = GetOrAdd<SemanticIntentResolver>();
         GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
@@ -622,6 +673,8 @@ public class VRControlPanel : MonoBehaviour
         Record("ERROR", "LLM: " + error);
         // A model that was just started can take over 30 s to answer the first time, so a timeout isn't "not running".
         string message = error.Contains("Request timeout") ? "The language model is taking too long (still loading?). Please say that again."
+            : error.StartsWith("Ollama request failed") && !Application.isEditor && _bridge != null && _bridge.Url == null
+                ? "Can't find the PC. Is the bridge running, and is the headset on the same Wi-Fi?"
             : error.StartsWith("Ollama request failed") ? "Can't reach the language model. Is Ollama running?"
             : "Something went wrong. Please say that again.";
         SetOutputFeedback(message, false);
@@ -760,6 +813,7 @@ public class VRControlPanel : MonoBehaviour
     {
         _transcript?.End();
         _transcript = null;
+        if (_bridge != null) _bridge.OnChanged -= OnBridgeChanged;
 
         if (_resolver != null)
         {
