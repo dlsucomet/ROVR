@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.XR;
 using Whisper;
 using Whisper.Utils;
 using ROVR;
@@ -79,6 +78,7 @@ public class VRControlPanel : MonoBehaviour
     private float[] _pendingPartial; // the newest sentence-so-far waiting for Whisper
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
+    private BodyUnderHead _bodyUnderHead;
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
@@ -126,6 +126,10 @@ public class VRControlPanel : MonoBehaviour
 
         // The Maze minimap (corner of the view, only in the Maze), for both voice and fixed-phrase modes.
         if (FindAnyObjectByType<MazeMinimap>() == null) gameObject.AddComponent<MazeMinimap>();
+
+        // Keeps the body (and its collisions) under the user's head in the headset, and hides its capsule.
+        _bodyUnderHead = playerBody.GetComponent<BodyUnderHead>();
+        if (_bodyUnderHead == null) _bodyUnderHead = playerBody.gameObject.AddComponent<BodyUnderHead>();
 
         // Force initial spawn rotation to plain destination facing 0 degrees Y
         TeleportTo(plainDestination, 0f, "Plain", "at start");
@@ -230,8 +234,9 @@ public class VRControlPanel : MonoBehaviour
             playerBody.rotation = Quaternion.Euler(0f, targetYRotation, 0f);
             _controller.enabled = true;
 
-            // Recenter XR tracking origin so headset layout matches world orientation cleanly
-            InputTracking.Recenter();
+            // The head (not just the body) lands on the destination, facing targetYRotation, wherever the
+            // user stands in their play area. (InputTracking.Recenter did this before OpenXR.)
+            if (_bodyUnderHead != null) _bodyUnderHead.FaceFrom(targetYRotation);
 
             Debug.Log($"<color=blue><b>[Teleport]</b> Moved player to {destination.name} facing {targetYRotation}° Y</color>");
             Vector3 p = destination.position;

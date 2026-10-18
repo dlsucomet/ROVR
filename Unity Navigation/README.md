@@ -37,6 +37,7 @@ utterance
 | `InterruptModule.cs` | Halt detection, by fixed keywords (never the LLM). Only a *leading* halt word counts; only an explicit correction after it is kept. |
 | `MovementHabits.cs` | How far "a bit" is: starts at 0.5 m, adapts to the user, resets per participant. |
 | `NavigationController.cs` | Movement: fixed speed, smooth stop at a target, smooth turns of any angle about the head, "turn until you see X", blocked detection. |
+| `BodyUnderHead.cs` | Keeps the body (the CharacterController) under the user's head. In the headset you stand anywhere in your play area, so walls used to stop the body rather than your head, and the body's capsule could be seen beside you. Each frame the body steps to the head, blocked by walls; the rig shifts back so the view doesn't move. A teleport puts the head on the destination, facing its direction. Hides the capsule while playing. |
 | `ComfortVignette.cs` | Darkens the edges of the view while turning, to reduce motion sickness. Strength, fade time and how much of the middle stays clear are in its Inspector; the shader is `Assets/Resources/ROVR/Vignette.shader`. |
 | `SemanticIntentResolver.cs` | Orchestrates all of it and enforces the rules below in code. |
 | `SpeechSegmenter.cs` | Splits microphone audio into sentences. A sentence ends only after 1.5 s of silence, so pausing mid-sentence doesn't cut it off. Hands out the sentence so far every 0.5 s and at each short pause, for early halts. Tells voice from silence against the room's noise floor. |
