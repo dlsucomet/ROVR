@@ -53,6 +53,11 @@ public class VRControlPanel : MonoBehaviour
     public float moveSpeed = 2f;     // fixed-phrase mode only; the LLM pipeline has its own speed
     public float moveDuration = 1f;  // fixed-phrase mode only
 
+    [Header("Steps")]
+    [Tooltip("The slight up-and-down of walking on step commands (\"take 3 steps\"): Off, Subtle (1.5 cm) or Strong (3 cm). " +
+             "The panel's Bob button cycles through them. Other moves never bob.")]
+    public StepBob.Strength stepBob = StepBob.Strength.Subtle;
+
     [Header("Teleport Destinations")]
     public Transform plainDestination;
     public Transform mazeDestination;
@@ -79,6 +84,8 @@ public class VRControlPanel : MonoBehaviour
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
     private BodyUnderHead _bodyUnderHead;
+    private StepBob _stepBob;  // in the LLM pipeline
+    private Text _stepBobText; // the Bob button's label
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
@@ -143,6 +150,7 @@ public class VRControlPanel : MonoBehaviour
         if (normalButton != null) normalButton.onClick.AddListener(() => { Record("BUTTON", "Normal"); SetSpeed(SpeedLevel.Normal); });
         if (fastButton != null) fastButton.onClick.AddListener(() => { Record("BUTTON", "Fast"); SetSpeed(SpeedLevel.Fast); });
         ShowSpeed(SpeedLevel.Normal, false);
+        MakeStepBobButton();
 
         // Questions can be longer than a line ("Which plant? Look at it..."): wrap, and shrink to fit the box.
         if (outputText != null)
@@ -199,6 +207,7 @@ public class VRControlPanel : MonoBehaviour
     private void Update()
     {
         if (_ollama != null) _ollama.LogExchanges = logLLM;
+        if (_stepBob != null) _stepBob.level = stepBob;
         HandleMicPermissionAnswer();
 
         // Handle Command Cooldown Timer
@@ -592,6 +601,7 @@ public class VRControlPanel : MonoBehaviour
         _resolver = GetOrAdd<SemanticIntentResolver>();
         GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
         GetOrAdd<ComfortVignette>(); // darkens the edges of the view while turning
+        _stepBob = GetOrAdd<StepBob>(); // the slight up-and-down of walking, for step commands
 
         _resolver.OnCommandResolved += HandleCommandResolved;
         _resolver.OnClarificationNeeded += HandleQuestion;
@@ -639,6 +649,46 @@ public class VRControlPanel : MonoBehaviour
         if (announce) SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
     }
 
+    // ---------- Steps ----------
+
+    // The Bob button, right of the speed buttons. A copy of the Normal button made at start, so the
+    // scene file doesn't change. Each press: subtle -> strong -> off -> subtle.
+    private void MakeStepBobButton()
+    {
+        if (normalButton == null) return;
+        var button = Instantiate(normalButton, normalButton.transform.parent);
+        button.name = "StepBobButton";
+        button.onClick = new Button.ButtonClickedEvent(); // none of the Normal button's
+        var rect = (RectTransform)button.transform;
+        var normal = (RectTransform)normalButton.transform;
+        rect.anchoredPosition = normal.anchoredPosition + new Vector2(215f, 0f);
+        rect.sizeDelta = new Vector2(110f, normal.sizeDelta.y);
+        var image = button.GetComponent<Image>();
+        if (image != null) image.color = Color.white;
+
+        _stepBobText = button.GetComponentInChildren<Text>();
+        if (_stepBobText != null)
+        {
+            _stepBobText.resizeTextForBestFit = true;
+            _stepBobText.resizeTextMinSize = Mathf.Max(8, _stepBobText.fontSize / 2);
+            _stepBobText.resizeTextMaxSize = _stepBobText.fontSize;
+        }
+
+        button.onClick.AddListener(() =>
+        {
+            stepBob = stepBob == StepBob.Strength.Subtle ? StepBob.Strength.Strong
+                : stepBob == StepBob.Strength.Strong ? StepBob.Strength.Off : StepBob.Strength.Subtle;
+            Record("BUTTON", "Bob: " + stepBob.ToString().ToLower());
+            ShowStepBob();
+        });
+        ShowStepBob();
+    }
+
+    private void ShowStepBob()
+    {
+        if (_stepBobText != null) _stepBobText.text = "Bob: " + stepBob.ToString().ToLower();
+    }
+
     private void HaltFromVoice()
     {
         Record("HALT", "Halt word heard while speaking");
@@ -659,7 +709,15 @@ public class VRControlPanel : MonoBehaviour
 
     private void HandleCommandResolved(NavigationCommand command)
     {
-        if (!command.IsClarification) SetOutputFeedback(Describe(command), true);
+        if (command.IsClarification) return;
+        SetOutputFeedback(Describe(command), true);
+
+        // Steps are the user's own (learned) length: the transcript says how far that was.
+        foreach (var step in command.steps)
+            if (step.action == ActionType.Move && step.InSteps)
+                Record("STEPS", step.HasMagnitude
+                    ? $"{step.magnitude:0.#} x {step.stepLength:F2} m = {step.magnitude * step.stepLength:F2} m"
+                    : $"steps of {step.stepLength:F2} m, no count");
     }
 
     private void HandleQuestion(string question)
@@ -685,7 +743,8 @@ public class VRControlPanel : MonoBehaviour
         SetOutputFeedback(message, false);
     }
 
-    // "Moving forward 5 m", "Moving left a bit", "Moving forward to the door, then turning right"
+    // "Moving forward 5 m", "Moving left a bit", "Moving forward to the door, then turning right",
+    // "Taking 3 steps forward", "Taking 3 steps toward the tree", "Walking in steps to the door"
     private string Describe(NavigationCommand command)
     {
         var parts = new System.Collections.Generic.List<string>();
@@ -694,14 +753,22 @@ public class VRControlPanel : MonoBehaviour
             string direction = step.direction == DirectionType.None ? "" : " " + step.direction.ToString().ToLower();
             // The target can be one particular object ("tree-3"); say what it is ("tree").
             string target = step.HasCondition ? _grounding.NameFor(step.condition).ToLower() : "";
+            string pace = step.speed == SpeedLevel.Slow ? ", slowly" : step.speed == SpeedLevel.Fast ? ", fast" : "";
             switch (step.action)
             {
+                case ActionType.Move when step.InSteps:
+                    string to = !step.HasCondition ? "" : step.until == UntilType.See ? " until I see the " + target
+                        : (step.HasMagnitude ? " toward the " : " to the ") + target;
+                    string count = step.magnitude.ToString("0.#") + (step.magnitude == 1f ? " step" : " steps");
+                    parts.Add(step.HasMagnitude
+                        ? "taking " + count + (step.HasCondition ? "" : direction) + to + pace
+                        : "walking" + (step.HasCondition ? "" : direction) + " in steps" + to + pace);
+                    break;
                 case ActionType.Move:
                     string how = step.HasCondition ? (step.until == UntilType.See ? " until I see the " : " to the ") + target
                         : step.amount == AmountType.Small ? " a bit"
                         : step.HasMagnitude ? " " + step.magnitude.ToString("0.#") + " m"
                         : "";
-                    string pace = step.speed == SpeedLevel.Slow ? ", slowly" : step.speed == SpeedLevel.Fast ? ", fast" : "";
                     parts.Add("moving" + direction + how + pace);
                     break;
                 case ActionType.Turn:

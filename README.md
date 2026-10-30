@@ -12,7 +12,7 @@ LLM-driven voice navigation in VR. A thesis prototype comparing joystick movemen
 Voice navigation runs through the LLM in `Assets/main.unity`:
 
 - **Speech:** Whisper transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine. On the headset, speech is transcribed on the PC through the bridge (about 0.4 s a sentence; the Quest itself takes about 15 s). In the Editor, [whisper.unity](https://github.com/Macoron/whisper.unity) can also do it.
-- **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons, a mic mute button and Slow / Normal / Fast speed buttons. **The mic starts muted.**
+- **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons, a mic mute button, Slow / Normal / Fast speed buttons and a **Bob** button for step commands (subtle / strong / off). **The mic starts muted.**
 - **Maze minimap:** in the corner of the view while in the Maze: the whole maze, you, and the exit.
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
 - **Halt words** (`stop`, `wait`, and Filipino `ops`) are fixed keywords. They stop the player before the sentence is finished, without the LLM.
@@ -71,6 +71,10 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 | `move forward 5 meters` | Moves 5 m forward |
 | `move forward until you hit a wall` | Stops 0.5 m short of the wall |
 | `move forward a bit`, then `a bit more` | Moves 0.5 m, then slightly further (the "bit" adapts to you) |
+| `take 3 steps forward`, `step back` | Walks 3 steps (a step starts at 0.7 m), or 1 step back, at about 2 steps a second; the view dips slightly with each step |
+| `one more step` (right after steps) | One more step, and steps get 15% longer; `step back` right after makes them 15% shorter |
+| `take two steps to the left` | Turns left, then takes 2 steps |
+| `take 4 steps toward the tree`, `walk in steps to the door`, `take steps until you see the door` | Steps toward an object (stopping early at it), all the way to it, or until it's in view |
 | `go to the door` | Moves toward the door and stops 0.5 m short. Asks which one if several are in different directions |
 | `walk to the couch` (House) | Everything on screen has a name, and everyday words work: goes to the sofa |
 | `go to the plant` (House start) | Several plants: asks which, and they glow. Look at one and say `that one`, or say `the left one` / `the one next to the stool` |

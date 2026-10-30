@@ -27,17 +27,21 @@ namespace ROVR
         {
             _body = GetComponent<CharacterController>();
             _head = Camera.main != null ? Camera.main.transform : null;
-
-            // The XR rig: the child of PlayerBody that holds the head camera.
-            if (_head != null && _head.IsChildOf(transform) && _head != transform)
-            {
-                _rig = _head;
-                while (_rig.parent != transform) _rig = _rig.parent;
-            }
+            _rig = RigOf(transform);
 
             Transform visual = transform.Find("BodyVisual");
             if (visual != null)
                 foreach (var shown in visual.GetComponentsInChildren<Renderer>()) shown.enabled = false;
+        }
+
+        // The XR rig: the child of the body that holds the head camera, or null if the camera isn't under the body.
+        public static Transform RigOf(Transform body)
+        {
+            Transform head = Camera.main != null ? Camera.main.transform : null;
+            if (head == null || head == body || !head.IsChildOf(body)) return null;
+            Transform rig = head;
+            while (rig.parent != body) rig = rig.parent;
+            return rig;
         }
 
         // Puts the head on the body's position, looking toward yaw (degrees), wherever the user stands in

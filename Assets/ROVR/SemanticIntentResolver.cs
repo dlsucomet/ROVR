@@ -78,7 +78,7 @@ namespace ROVR
 STEPS. Each step has:
 - action: move | turn | stop
 - direction: forward | back | left | right | up | down | none
-- amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
+- amount: exact = the user gave a number (magnitude is meters for move, degrees for turn); small = they said a bit / a little / slightly / a touch (magnitude 0); steps = the user counts steps or paces ('take 3 steps', 'a step back', 'two more steps'): magnitude is the number of steps, 1 for 'a step' or 'step forward', 0 when they walk in steps without a number ('take steps until you see the door'); none = no amount was given (magnitude 0, the movement continues until the user stops it or the condition is met)
 - condition: the object to move toward or stop at, in the user's own word, singular (tree, door, couch); when there is no target it is an empty string """" (never the word none)
 - until: reach = the step ends on getting to the object (the default); see = it ends as soon as the object comes into view ('when you see the door')
 - speed: slow, normal or fast when the user says how fast for this command ('slowly walk to the door', 'quickly go to the tree'); otherwise an empty string
@@ -91,7 +91,7 @@ NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = mag
 
 VISIBLE OBJECTS is what the user can see right now. Each entry has name, distance_m, angle_deg (negative = left, positive = right, 0 = straight ahead) and side. Use it to understand the command. You do not decide whether an object is in view or which of several the user means: write the step with the object in the user's own word, and the system checks it against what is in view and asks the user when needed.
 
-PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'back' or 'the other way' keeps the same action (a turn stays a turn) with the opposite direction. If the command needs a previous command and it says 'Previous command: none', return no steps and ask what they want to do. Never take object information from the previous command.
+PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat its direction with amount small; 'one more step' or 'two more steps' repeat its direction with amount steps; 'back' or 'the other way' keeps the same action (a turn stays a turn) with the opposite direction. If the command needs a previous command and it says 'Previous command: none', return no steps and ask what they want to do. Never take object information from the previous command.
 
 WHICH ONE. When the user singles out one of several objects, set which: left, right, middle, nearest (the closer one), farthest, or looking (that one, this one, that tree: the one they are looking at); or set which_near to the object it is next to ('the tree by the pond' = pond). Otherwise both are empty strings. When you asked the user which one and they only answer that ('the left one', 'that one', 'the one by the pond'), return no steps and set which or which_near.
 
@@ -140,6 +140,14 @@ Command: turn left twice
 {""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""},{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: slowly walk to the door (a door is ahead)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""door"",""until"":""reach"",""speed"":""slow""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: take three steps forward
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""steps"",""magnitude"":3,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: step back
+{""steps"":[{""action"":""move"",""direction"":""back"",""amount"":""steps"",""magnitude"":1,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: take 4 steps toward the tree (a tree is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""steps"",""magnitude"":4,""condition"":""tree"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: take steps until you see the door
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""steps"",""magnitude"":0,""condition"":""door"",""until"":""see"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the lamp (no lamp in the visible objects list)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
 
@@ -385,6 +393,13 @@ Command: go to the lamp (no lamp in the visible objects list)
             if (problem != null) command = NavigationCommand.Clarification(problem);
             OnChoicesChanged?.Invoke(glowNext != null ? (IList<Transform>)glowNext : NoObjects);
 
+            // Before OnCommandResolved, so listeners see the metres ("a bit", the step length).
+            if (!command.IsClarification)
+            {
+                Habits.Observe(command, lastCommand, lastOutcome, Time.time - lastCommandTime, SaysMore.IsMatch(utterance.ToLowerInvariant()));
+                ResolveAmounts(command);
+            }
+
             OnCommandResolved?.Invoke(command);
 
             if (command.IsClarification)
@@ -392,9 +407,6 @@ Command: go to the lamp (no lamp in the visible objects list)
                 Ask(command.clarificationPrompt);
                 return;
             }
-
-            Habits.Observe(command, lastCommand, lastOutcome, Time.time - lastCommandTime);
-            ResolveAmounts(command);
 
             lastCommand = command;
             lastOutcome = null;
@@ -415,8 +427,10 @@ Command: go to the lamp (no lamp in the visible objects list)
         // Returns a question for the user if any step targets something the user can't currently see.
         string FindGroundingProblem(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
+            ApplySteps(command, utterance);
             AttachMissingTarget(command, utterance);
             ApplyRepeatsAndTurnAround(command, utterance);
+            TurnForSideSteps(command);
 
             bool viewChanged = false; // after a move or a turn, what's in view is different: later targets are found when their step starts
 
@@ -477,7 +491,11 @@ Command: go to the lamp (no lamp in the visible objects list)
             bool seeking = text.Contains(" see ") || text.Contains(" find ") || text.Contains(" face ");
             foreach (var step in command.steps)
             {
-                if (step.HasCondition || step.HasMagnitude || step.amount != AmountType.None) continue;
+                // Open-ended moves, including "walk in steps to the tree"; counted steps only when said to be
+                // toward something ("take 3 steps toward the tree").
+                bool open = !step.HasMagnitude && (step.amount == AmountType.None || step.InSteps);
+                bool toward = step.InSteps && step.HasMagnitude && (text.Contains(" toward") || text.Contains(" to the "));
+                if (step.HasCondition || !(open || toward)) continue;
                 bool openMove = step.action == ActionType.Move && step.direction != DirectionType.Up && step.direction != DirectionType.Down;
                 bool openTurn = step.action == ActionType.Turn && seeking;
                 if (openMove || openTurn) step.condition = said[0];
@@ -520,6 +538,94 @@ Command: go to the lamp (no lamp in the visible objects list)
                         step.amount = AmountType.Exact;
                         step.magnitude = 180f;
                     }
+        }
+
+        // ---------------------------------------------------------------- steps
+
+        static readonly System.Text.RegularExpressions.Regex CountedSteps = new System.Text.RegularExpressions.Regex(
+            @"\b(\d+(?:\.\d+)?|a couple of|a few|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+(?:(?:more|small|little|big|long|short|tiny|quick)\s+)*(?:steps?|paces?)\b");
+        static readonly System.Text.RegularExpressions.Regex AnySteps = new System.Text.RegularExpressions.Regex(@"\b(?:steps?|paces?)\b");
+        static readonly System.Text.RegularExpressions.Regex PluralSteps = new System.Text.RegularExpressions.Regex(@"\b(?:steps|paces)\b");
+        static readonly System.Text.RegularExpressions.Regex Meters = new System.Text.RegularExpressions.Regex(@"\b(?:\d+(?:\.\d+)?\s*m|meters?|metres?)\b");
+        static readonly string[] NumberWords = { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve" };
+        static readonly System.Text.RegularExpressions.Regex SaysMore = new System.Text.RegularExpressions.Regex(@"\b(?:more|again|further)\b");
+
+        // Whether the user talks in steps, and how many: "take 3 steps" = 3, "a step back" = 1, "two more
+        // steps" = 2, "step forward" = 1 (the verb on its own, bareVerb), "walk in steps to the door" = 0
+        // (no count). "Step forward 2 meters" is meters, not steps.
+        public static bool StepsIn(string utterance, out float count, out bool bareVerb)
+        {
+            string text = utterance.ToLowerInvariant();
+            count = 0f;
+            bareVerb = false;
+            if (!AnySteps.IsMatch(text)) return false;
+
+            var counted = CountedSteps.Match(text);
+            if (counted.Success)
+            {
+                count = NumberOf(counted.Groups[1].Value);
+                return count > 0f;
+            }
+            if (Meters.IsMatch(text)) return false;
+            if (PluralSteps.IsMatch(text)) return true;
+            count = 1f;
+            bareVerb = true;
+            return true;
+        }
+
+        static float NumberOf(string word)
+        {
+            if (word == "a" || word == "an") return 1f;
+            if (word == "a couple of") return 2f;
+            if (word == "a few") return 3f;
+            if (word == "fifteen") return 15f;
+            if (word == "twenty") return 20f;
+            int i = Array.IndexOf(NumberWords, word);
+            if (i >= 0) return i;
+            return float.TryParse(word, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float n) ? n : 0f;
+        }
+
+        // Whether a move is in steps, and how many, comes from the user's words: the model has only to
+        // say which way. In a chain of several moves its labels stand, since one count can't be placed.
+        void ApplySteps(NavigationCommand command, string utterance)
+        {
+            if (string.IsNullOrEmpty(utterance)) return; // a command resumed after "which one?" was already checked
+
+            bool said = StepsIn(utterance, out float count, out bool bareVerb);
+            var moves = Array.FindAll(command.steps, s => s.action == ActionType.Move);
+            if (!said)
+            {
+                // Steps the user never mentioned: the number was meters, or there was none.
+                foreach (var move in moves)
+                    if (move.InSteps) move.amount = move.HasMagnitude ? AmountType.Exact : AmountType.None;
+                return;
+            }
+            if (moves.Length != 1) return;
+
+            // "Step to the door" walks to it in steps; it isn't one step toward it.
+            if (bareVerb && moves[0].HasCondition) count = 0f;
+            moves[0].amount = AmountType.Steps;
+            moves[0].magnitude = count;
+        }
+
+        // "Take two steps to the left": a person turns that way and walks, so: turn left, then two steps forward.
+        static void TurnForSideSteps(NavigationCommand command)
+        {
+            bool Sideways(NavigationStep s) => s.action == ActionType.Move && s.InSteps && (s.direction == DirectionType.Left || s.direction == DirectionType.Right);
+            if (!Array.Exists(command.steps, Sideways)) return;
+
+            var steps = new List<NavigationStep>();
+            foreach (var s in command.steps)
+            {
+                if (Sideways(s))
+                {
+                    steps.Add(new NavigationStep { action = ActionType.Turn, direction = s.direction, amount = AmountType.Exact, magnitude = 90f, condition = string.Empty, until = UntilType.Reach });
+                    s.direction = DirectionType.Forward;
+                }
+                steps.Add(s);
+            }
+            if (steps.Count > NavigationCommand.MaxSteps) steps.RemoveRange(NavigationCommand.MaxSteps, steps.Count - NavigationCommand.MaxSteps);
+            command.steps = steps.ToArray();
         }
 
         // The object a step is about, as a scan name ("sofa") or one object's id, worked out from the
@@ -876,13 +982,16 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         const float SmallTurnDegrees = 30f; // "turn left a little"
 
-        // "A bit" becomes the user's current bit size in metres; a small turn is 30 degrees.
+        // "A bit" becomes the user's current bit size in metres; a small turn is 30 degrees. Steps get the
+        // user's current step length.
         void ResolveAmounts(NavigationCommand command)
         {
             foreach (var step in command.steps)
             {
-                if (step.amount != AmountType.Small) continue;
-                step.magnitude = step.action == ActionType.Move ? Habits.BitMeters : SmallTurnDegrees;
+                if (step.amount == AmountType.Small)
+                    step.magnitude = step.action == ActionType.Move ? Habits.BitMeters : SmallTurnDegrees;
+                else if (step.InSteps)
+                    step.stepLength = Habits.StepMeters;
             }
         }
 

@@ -24,6 +24,10 @@ namespace ROVR
         [SerializeField] float slowSpeed = 1f;           // m/s at Slow
         [SerializeField] float fastSpeed = 3f;           // m/s at Fast
         [SerializeField] float verticalSpeed = 1.5f;     // m/s for explicit up/down commands
+        [Tooltip("Step commands (\"take 3 steps\") walk at a rhythm, in steps per second at Slow / Normal / Fast; the speed is that times the step length.")]
+        [SerializeField] float slowStepsPerSecond = 1.5f;
+        [SerializeField] float stepsPerSecond = 2f;
+        [SerializeField] float fastStepsPerSecond = 2.5f;
         [Tooltip("Seconds a 90-degree turn takes. Turns ease in and out; other angles take proportionally long (but at least shortestTurnSeconds).")]
         [SerializeField] float quarterTurnSeconds = 0.9f;
         [SerializeField] float shortestTurnSeconds = 0.35f;
@@ -49,6 +53,7 @@ namespace ROVR
         // Walking speed for moves without their own; changing it takes effect mid-move.
         public SpeedLevel Speed { get; set; } = SpeedLevel.Normal;
         public float SpeedOf(SpeedLevel level) { return level == SpeedLevel.Slow ? slowSpeed : level == SpeedLevel.Fast ? fastSpeed : moveSpeed; }
+        public float StepsPerSecondOf(SpeedLevel level) { return level == SpeedLevel.Slow ? slowStepsPerSecond : level == SpeedLevel.Fast ? fastStepsPerSecond : stepsPerSecond; }
         // The step that ended a command early (blocked, or its target not found), for the message.
         public NavigationStep FailedStep { get; private set; }
 
@@ -148,15 +153,21 @@ namespace ROVR
                 default: yield break;
             }
 
-            // Distance to cover: an explicit magnitude ("move 10 meters"), a condition
+            bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
+            bool walking = horizontal || step.direction == DirectionType.Back;
+
+            // Step commands ("take 3 steps", "walk in steps to the door"): a number of steps of the user's
+            // step length, at a walking rhythm, with the view dipping once per step (StepBob).
+            bool inSteps = step.InSteps && step.stepLength > 0f && walking;
+            StepBob bob = inSteps ? GetComponent<StepBob>() : null;
+
+            // Distance to cover: an explicit magnitude ("move 10 meters", "take 3 steps"), a condition
             // ("until you reach the door"), or neither (continuous until halted or blocked).
-            float target = step.HasMagnitude ? step.magnitude : float.PositiveInfinity;
+            float target = !step.HasMagnitude ? float.PositiveInfinity : inSteps ? step.magnitude * step.stepLength : step.magnitude;
             if (step.HasCondition) target = Mathf.Min(target, maxConditionalDistance);
 
             float travelled = 0f;
             int blockedFrames = 0;
-            bool horizontal = step.direction == DirectionType.Forward || step.direction == DirectionType.Left || step.direction == DirectionType.Right;
-            bool walking = horizontal || step.direction == DirectionType.Back;
 
             // "Move forward until you see the door": go that way, and stop the moment it's in view.
             if (step.HasCondition && step.until == UntilType.See && grounding != null)
@@ -164,13 +175,14 @@ namespace ROVR
                 float nextLook = 0f;
                 while (travelled < target)
                 {
-                    if (walking) speed = SpeedOf(step.speed ?? Speed);
+                    if (walking) speed = WalkingSpeed(step, inSteps);
                     if (Time.time >= nextLook)
                     {
                         nextLook = Time.time + LookInterval;
                         if (grounding.IsVisible(step.condition)) yield break;
                     }
                     if (!Step(dir, speed, ref travelled, target, ref blockedFrames)) yield break;
+                    if (bob != null) bob.Walk(travelled / step.stepLength);
                     yield return null;
                 }
                 stepOutcome = CommandOutcome.NotFound;
@@ -193,7 +205,7 @@ namespace ROVR
 
             while (travelled < target)
             {
-                if (walking) speed = SpeedOf(step.speed ?? Speed);
+                if (walking) speed = WalkingSpeed(step, inSteps);
                 float thisSpeed = speed;
                 if (goal != null)
                 {
@@ -211,14 +223,30 @@ namespace ROVR
                 }
 
                 if (!Step(dir, thisSpeed, ref travelled, target, ref blockedFrames)) yield break;
+                if (bob != null) bob.Walk(travelled / step.stepLength);
                 yield return null;
             }
+        }
+
+        // m/s for a walking move, read every frame so "faster" / "slower" take effect mid-move. In steps:
+        // the rhythm (steps per second) times the step length.
+        float WalkingSpeed(NavigationStep step, bool inSteps)
+        {
+            var level = step.speed ?? Speed;
+            return inSteps ? StepsPerSecondOf(level) * step.stepLength : SpeedOf(level);
         }
 
         // One frame of movement. Counts what actually happened, not what was asked for, so walls end
         // the step: false (with stepOutcome Blocked) after BlockedFramesLimit frames of no progress.
         bool Step(Vector3 dir, float speed, ref float travelled, float target, ref int blockedFrames)
         {
+            // Within half a millimetre is there. Far from the origin (the Plain is at x = 250) a smaller
+            // move is lost to float precision, and the step used to end as Blocked on arrival.
+            if (target - travelled < 0.0005f)
+            {
+                travelled = target;
+                return true;
+            }
             float delta = Mathf.Min(speed * Time.deltaTime, target - travelled);
             Vector3 before = transform.position;
             controller.Move(dir * delta);

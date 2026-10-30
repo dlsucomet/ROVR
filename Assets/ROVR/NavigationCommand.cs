@@ -16,9 +16,10 @@ namespace ROVR
     public enum ActionType { Move, Turn, Stop, Unknown }
     public enum DirectionType { Forward, Back, Left, Right, Up, Down, None }
 
-    // How much the user asked for. The LLM only labels it; the engine decides what "small" means
-    // in metres (MovementHabits), so the model never does geometry.
-    public enum AmountType { None, Exact, Small }
+    // How much the user asked for. The LLM only labels it; the engine decides what "small" and a step
+    // mean in metres (MovementHabits), so the model never does geometry. Steps: magnitude is the number
+    // of steps ("take 3 steps"), 0 for walking in steps without a count ("walk in steps to the door").
+    public enum AmountType { None, Exact, Small, Steps }
 
     public enum CommandOutcome { Completed, Halted, Blocked, NotFound }
 
@@ -55,13 +56,15 @@ namespace ROVR
         public ActionType action;
         public DirectionType direction;
         public AmountType amount;
-        public float magnitude;   // meters for Move, degrees for Turn; 0 = not specified
+        public float magnitude;   // meters for Move (steps when amount is Steps), degrees for Turn; 0 = not specified
         public string condition;  // object to move to / turn until seen: a name ("tree") or one object's id ("tree-3"); empty = none
         public UntilType until;   // with a condition: stop on reaching it, or as soon as it's in view
         public SpeedLevel? speed; // this step only ("slowly go to the door"); null = the current speed
+        public float stepLength;  // metres per step when amount is Steps; set by the engine (MovementHabits)
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;
+        public bool InSteps => amount == AmountType.Steps;
     }
 
     // The JSON schema handed to Ollama's `format` field to force structured output that maps
@@ -78,7 +81,7 @@ namespace ROVR
         ""properties"": {
           ""action"": { ""type"": ""string"", ""enum"": [""move"", ""turn"", ""stop""] },
           ""direction"": { ""type"": ""string"", ""enum"": [""forward"", ""back"", ""left"", ""right"", ""up"", ""down"", ""none""] },
-          ""amount"": { ""type"": ""string"", ""enum"": [""none"", ""exact"", ""small""] },
+          ""amount"": { ""type"": ""string"", ""enum"": [""none"", ""exact"", ""small"", ""steps""] },
           ""magnitude"": { ""type"": ""number"" },
           ""condition"": { ""type"": ""string"" },
           ""until"": { ""type"": ""string"", ""enum"": [""reach"", ""see""] },
@@ -152,6 +155,7 @@ namespace ROVR
                     if (amount == AmountType.Exact && magnitude <= 0f) amount = AmountType.None;
                     if (amount == AmountType.None && magnitude > 0f) amount = AmountType.Exact;
                     if (amount == AmountType.Small) magnitude = 0f;
+                    if (amount == AmountType.Steps && action != ActionType.Move) { amount = AmountType.None; magnitude = 0f; } // only walking has steps
 
                     steps.Add(new NavigationStep
                     {
