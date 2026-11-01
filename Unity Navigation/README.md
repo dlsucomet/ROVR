@@ -129,7 +129,7 @@ Call `SemanticIntentResolver.ResetSession()` between participants: it clears the
 - **A step** is the user's own learned length: it starts at 0.7 m (a typical walking step) and stays between 0.4 and 1.0 m. Step commands walk at 1.5 / 2 / 2.5 steps a second (Slow / Normal / Fast), so 0.7 m steps at Normal are 1.4 m/s, a normal walk. Measured: "take 3 steps forward" moved 2.100 m in 1.49 s with three 1.5 cm dips; "slowly take 3 steps" took 2.00 s, and 1.20 s at Fast. The transcript records each step command in metres (`STEPS 3 x 0.70 m = 2.10 m`). Moves toward an object stop 0.50 m short of it. "A bit" starts at 0.5 m.
 - **The body** is a `CharacterController` capsule 2 m tall with a 0.5 m radius, so it needs openings wider than 1 m.
 - **The worlds are real-size:** House 24 × 20 m with 3.0 m walls and doorways 2.0 m wide and 2.2 m high; Maze 12 × 9 cells of 4 m (48 × 36 m); Plain 100 × 100 m with an 8.0 m landmark tree.
-- **Furniture keeps real proportions:** sofa 1.96 m wide, fridge 1.84 m tall, bed 1.9 × 2.25 m, dining chairs 0.94 m tall. Two Kenney models run large or small for the real thing: the toilets are 1.6 m tall (the model includes a high cistern) and the dining table is 0.65 m tall (0.75 m is usual).
+- **Furniture keeps real proportions:** sofa 1.96 m wide, fridge 1.84 m tall, bed 1.9 × 2.25 m, dining chairs 0.94 m tall. The toilets are scaled to 0.76 m tall, 0.53 m wide and 0.80 m deep (the kit's model is chunky), and the dining table is 0.65 m tall (0.75 m is usual).
 
 ## Tested against the real model
 

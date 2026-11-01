@@ -19,8 +19,9 @@
 // How a prop is placed (see BuildKitProp):
 //   * (x, z) is the centre of its footprint, y0 is the height above the floor (wall-mounted / stacked).
 //   * yaw is the direction the prop FACES: 0 = +Z (north), 90 = +X (east), 180 = -Z (south), 270 = -X (west).
-//   * back:true pushes the prop against the wall behind it (opposite of the way it faces), so
-//     furniture sits flush instead of floating.
+//   * back:true puts the prop against the wall behind it (opposite of the way it faces): it is
+//     measured against the actual wall (the baseboard's face) after placing, so it sits flush
+//     whatever size the model comes out.
 //   * row:true repeats the model along the prop's length to fill it (kitchen runs, shelving).
 //   * scale multiplies KitScale for pieces that come out too big or small (toilets, sinks).
 //   * sx/sy/sz are the ORIGINAL blockout size: used for the fallback box and as the target run
@@ -64,6 +65,13 @@ public static class HouseGenerator
     // (south) in their files, so 180. IF EVERY CHAIR / SOFA / TOILET FACES THE WRONG WAY after
     // generating, change this to 0. Only 0 or 180 make sense.
     const float NativeFrontYaw = 180f;
+
+    // Models whose front is not where NativeFrontYaw says: turned this much more (degrees) inside the prop.
+    // The kit's toilet faces 90 degrees off the rest of the kit; without this both toilets came out sideways.
+    static readonly Dictionary<string, float> ModelFrontFix = new Dictionary<string, float> { { "toilet", 90f } };
+
+    // Gap between a back:true prop and the wall: the baseboard stands 2 cm proud of the wall.
+    const float AgainstWall = 0.02f;
 
     // A repeated run may stretch or squash each module a little so it fills its length exactly.
     const float MinStretch = 0.9f;
@@ -203,12 +211,13 @@ public static class HouseGenerator
 
         // kitchen (15..24, 0..15) + dining (19..24, 15..20), door west z 4..6
         new Prop("Fridge", F, "kitchenFridgeLarge", 16f, 0.6f, 1f, 1.9f, 0.9f, "Steel", yaw: 0f, back: true),
-        new Prop("Counter West", F, "kitchenCabinetDrawer", 17.55f, 0.45f, 2f, 0.9f, 0.7f, "White", yaw: 0f, back: true, row: true),
-        new Prop("Stove", F, "kitchenStoveElectric", 19.5f, 0.45f, 1f, 0.9f, 0.7f, "Dark", yaw: 0f, back: true, row: true),
-        new Prop("Range Hood", F, "hoodLarge", 19.5f, 0.4f, 1f, 0.6f, 0.6f, "Steel", y0: 1.6f, yaw: 0f, back: true),
-        new Prop("Kitchen Sink", F, "kitchenSink+kitchenCabinetDrawer", 21f, 0.45f, 2f, 0.9f, 0.7f, "Steel", yaw: 0f, back: true, row: true),
-        new Prop("Counter East", F, "kitchenCabinet", 23f, 0.45f, 1.8f, 0.9f, 0.7f, "White", yaw: 0f, back: true, row: true),
-        new Prop("Counter Wall", F, "kitchenCabinet", 23.55f, 3f, 0.7f, 0.9f, 3.6f, "White", yaw: 270f, back: true, row: true),
+        // One unbroken run along the south wall, fridge to corner; the east-wall run starts where it ends.
+        new Prop("Counter West", F, "kitchenCabinetDrawer", 17.52f, 0.45f, 2f, 0.9f, 0.7f, "White", yaw: 0f, back: true, row: true),
+        new Prop("Stove", F, "kitchenStoveElectric", 19.02f, 0.45f, 1f, 0.9f, 0.7f, "Dark", yaw: 0f, back: true, row: true),
+        new Prop("Range Hood", F, "hoodLarge", 19.02f, 0.4f, 1f, 0.6f, 0.6f, "Steel", y0: 1.6f, yaw: 0f, back: true),
+        new Prop("Kitchen Sink", F, "kitchenSink+kitchenCabinetDrawer", 20.51f, 0.45f, 2f, 0.9f, 0.7f, "Steel", yaw: 0f, back: true, row: true),
+        new Prop("Counter East", F, "kitchenCabinet", 22.7f, 0.45f, 2.39f, 0.9f, 0.7f, "White", yaw: 0f, back: true, row: true),
+        new Prop("Counter Wall", F, "kitchenCabinet", 23.55f, 2.91f, 0.7f, 0.9f, 3.78f, "White", yaw: 270f, back: true, row: true),
         new Prop("Kitchen Island", F, "kitchenCabinet", 19.5f, 4.5f, 3f, 0.95f, 1.2f, "Wood", yaw: 180f, row: true),
         new Prop("Bar Stool 1", C, "stoolBar", 18.6f, 5.3f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 180f),
         new Prop("Bar Stool 2", C, "stoolBar", 19.5f, 5.3f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 180f),
@@ -224,7 +233,7 @@ public static class HouseGenerator
         new Prop("Pantry Shelf", F, "bookcaseOpen", 23.55f, 18.2f, 0.5f, 2f, 2.6f, "Wood", yaw: 270f, back: true, row: true),
 
         // powder room (15..19, 15..20), door west z 16..18
-        new Prop("Powder Toilet", F, "toilet", 17.5f, 19.5f, 0.45f, 0.45f, 0.75f, "White", yaw: 180f, back: true, scale: 0.85f),
+        new Prop("Powder Toilet", F, "toilet", 17.5f, 19.5f, 0.45f, 0.45f, 0.75f, "White", yaw: 180f, back: true, scale: 0.4f),
         new Prop("Powder Vanity", F, "bathroomSink", 18.6f, 17f, 0.5f, 0.9f, 0.9f, "White", yaw: 270f, back: true, scale: 0.8f),
 
         // ground bedroom (0..9, 10..20), door east z 12..14
@@ -237,16 +246,16 @@ public static class HouseGenerator
         new Prop("Bedroom Chair", C, "chairDesk", 5.5f, 11.5f, 0.5f, 0.9f, 0.5f, "Dark", yaw: 180f),
 
         // ensuite (0..4, 15..20), door east z 16..18
-        new Prop("Ensuite Toilet", F, "toilet", 0.5f, 19.2f, 0.75f, 0.45f, 0.45f, "White", yaw: 90f, back: true, scale: 0.85f),
+        new Prop("Ensuite Toilet", F, "toilet", 0.5f, 19.2f, 0.75f, 0.45f, 0.45f, "White", yaw: 90f, back: true, scale: 0.4f),
         new Prop("Ensuite Vanity", F, "bathroomSink", 2.5f, 19.55f, 1f, 0.9f, 0.5f, "White", yaw: 180f, back: true, scale: 0.8f),
-        new Prop("Ensuite Shower", F, "showerRound", 0.62f, 15.62f, 1f, 2f, 1f, "Steel", yaw: 180f, scale: 0.85f),
+        new Prop("Ensuite Shower", F, "showerRound", 0.62f, 15.62f, 1f, 2f, 1f, "Steel", yaw: 0f, scale: 0.85f), // curved front into the room
 
         // extra furniture (all tagged Furniture, so the chair count the LLM sees does not change)
         new Prop("Side Table 2", F, "cabinetBed", 2f, 9.5f, 0.5f, 0.6f, 0.5f, "Wood", yaw: 180f, back: true),
         new Prop("Living Armchair 2", F, "loungeChair", 6.8f, 2.8f, 0.9f, 0.85f, 0.9f, "Fabric", yaw: 180f),
         new Prop("Bedroom Lamp", F, "lampRoundFloor", 8.5f, 19.4f, 0.35f, 1.6f, 0.35f, "Steel", yaw: 0f),
-        new Prop("Hall Stool 1", F, "stoolBar", 9.55f, 7.6f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f),
-        new Prop("Hall Stool 2", F, "stoolBar", 9.55f, 8.3f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f),
+        new Prop("Hall Stool 1", F, "stoolBar", 9.55f, 7.6f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f, back: true),
+        new Prop("Hall Stool 2", F, "stoolBar", 9.55f, 8.3f, 0.4f, 0.7f, 0.4f, "Dark", yaw: 90f, back: true),
     };
 
     // ---- Nature Kit decor ----------------------------------------------------------------------
@@ -278,7 +287,7 @@ public static class HouseGenerator
         new Decor("Console Statue", "Console Table", 0f, 0f, ("statue_head", 0.35f)),
 
         // living room
-        new Decor("Living Plant 1", null, 8.4f, 1f, TallPlant),
+        new Decor("Living Plant 1", null, 8.4f, 1f, BigPlant), // the tall one, pushed off the walls, stood in front of Living Armchair 2
         new Decor("Living Plant 2", null, 0.7f, 6.4f, BigPlant),
         new Decor("Living Cactus", "Side Table", 0f, 0f, ("pot_small", 0.12f), ("cactus_short", 0.3f)),
 
@@ -330,6 +339,7 @@ public static class HouseGenerator
             }
 
             if (!any) { Object.DestroyImmediate(holder); continue; }
+            if (d.surface == null) OffTheWalls(holder, props.parent.Find("Walls"));
 
             Bounds all = RenderBounds(holder);
             var box = holder.AddComponent<BoxCollider>();
@@ -452,6 +462,8 @@ public static class HouseGenerator
         for (int i = 0; i < count; i++)
         {
             var m = Spawn(prefabs[i % prefabs.Length], holder.transform, s);
+            if (ModelFrontFix.TryGetValue(names[i % names.Length], out float fix))
+                m.transform.localRotation = Quaternion.Euler(0f, fix, 0f);
             if (p.row)
             {
                 Vector3 ls = m.transform.localScale;
@@ -476,7 +488,57 @@ public static class HouseGenerator
         holder.transform.localRotation = Quaternion.Euler(0f, turn, 0f);
 
         TagAll(holder, p.tag);
+        if (p.back) AgainstTheWall(holder, p.yaw);
         return holder;
+    }
+
+    // Moves a back:true prop so its back touches the wall behind it (the baseboard's face). The (x, z)
+    // in the table only roughly says where that wall is, and the models aren't the size of their
+    // footprints, so it is measured: a ray from the prop's middle, above the baseboard, straight back.
+    static void AgainstTheWall(GameObject prop, float yaw)
+    {
+        var box = prop.GetComponent<BoxCollider>();
+        if (box == null) return;
+        Physics.SyncTransforms();
+        Vector3 back = Quaternion.Euler(0f, yaw + 180f, 0f) * Vector3.forward;
+        Bounds b = box.bounds;
+        float halfDepth = Mathf.Abs(back.x) > 0.5f ? b.extents.x : b.extents.z;
+        Vector3 from = new Vector3(b.center.x, Mathf.Clamp(b.center.y, 0.3f, 1.2f), b.center.z);
+
+        var hits = Physics.RaycastAll(from, back, halfDepth + 1f, ~0, QueryTriggerInteraction.Ignore);
+        System.Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
+        foreach (var hit in hits)
+        {
+            if (hit.collider.transform.IsChildOf(prop.transform) || !hit.collider.CompareTag("Wall")) continue;
+            float gap = hit.distance - halfDepth - AgainstWall;
+            if (Mathf.Abs(gap) < 0.6f) prop.transform.position += back * gap;
+            return;
+        }
+    }
+
+    // A floor plant whose pot or leaves reach into a wall is moved out, away from the wall, so nothing
+    // shows through into the next room.
+    static void OffTheWalls(GameObject item, Transform walls)
+    {
+        for (int pass = 0; pass < 3; pass++)
+        {
+            Bounds b = RenderBounds(item);
+            bool moved = false;
+            foreach (var wall in walls.GetComponentsInChildren<Collider>())
+            {
+                Bounds w = wall.bounds;
+                if (w.min.y > b.max.y || !w.Intersects(b)) continue; // lintels over doorways stand above the plants
+                float right = w.max.x - b.min.x, left = b.max.x - w.min.x;
+                float front = w.max.z - b.min.z, behind = b.max.z - w.min.z;
+                float pushX = right < left ? right : -left;
+                float pushZ = front < behind ? front : -behind;
+                Vector3 push = Mathf.Abs(pushX) < Mathf.Abs(pushZ) ? new Vector3(pushX, 0f, 0f) : new Vector3(0f, 0f, pushZ);
+                item.transform.position += push + push.normalized * 0.03f;
+                moved = true;
+                break;
+            }
+            if (!moved) return;
+        }
     }
 
     static GameObject Spawn(GameObject prefab, Transform parent, float scale)
