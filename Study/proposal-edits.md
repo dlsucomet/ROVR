@@ -4,6 +4,8 @@ Changes to `_HXIL__ROVR_CS_ST_Proposal_Document-5.pdf` so it matches the study d
 
 The decisions behind them: world order Plain → Maze → House; SSQ before the first world, then SSQ, Raw NASA-TLX, SUS and UEQ-S after each world; one set of eligibility criteria; the House names every object in view; no up/down tasks; think-aloud kept for the controller group; smooth turning and adjustable speed in both conditions; the maze minimap shown in both; seated on a swivel chair; a 4-person pilot, each person doing both conditions.
 
+**Updated 1 November 2026:** with the controller, speed now follows how far the left stick is pushed, up to ROVR's normal speed (2 m/s), instead of three speed buttons. ROVR keeps its three speeds by voice. Edits 4, 6, 15, 22 and 27 say this.
+
 **Tense:** Chapter 7 is written in the past tense ("The study employed…", "Participants were randomly…"), while §4.4 uses the future. The replacement text below uses the future, as a proposal should. Change the rest of Chapter 7 to match.
 
 ---
@@ -22,11 +24,11 @@ The decisions behind them: world order Plain → Maze → House; SSQ before the 
 ### §2.1 Locomotion Modalities in VR (p. 7)
 
 4. **Movement model.** Now: *"both modalities are constrained to identical directional controls: continuous linear translation (moving forward, backward, or vertically) and discrete angular rotation (shifting the view vector in fixed 90-degree increments)."*
-   → "both modalities are constrained to the same movement model: continuous translation along the ground at one of three fixed speeds (slow, normal and fast), and smooth rotation about the user's head, with a comfort vignette that darkens the edges of the view while turning."
+   → "both modalities are constrained to the same movement model: continuous translation along the ground, and smooth rotation about the user's head, with a comfort vignette that darkens the edges of the view while turning. With voice, the user chooses between three walking speeds (slow, normal and fast); with the controller, speed follows how far the thumbstick is pushed, up to the normal speed."
 5. **Cybersickness.** Now: *"While cybersickness is not evaluated as a formal dependent variable in our metric set, its underlying physiological triggers…"*
    → "While cybersickness is not a primary dependent variable in our metric set, it is monitored with the Simulator Sickness Questionnaire (SSQ) as a control measure (Section 7.1.3), and its underlying physiological triggers…"
 6. **Comfort measures.** Now: *"…enforces constant movement speeds, and utilizes fixed discrete snap-turns rather than unconstrained continuous yaw or pitch rotation."*
-   → "…moves at constant speeds that the user can switch between, and turns only about the vertical axis, smoothly and with a comfort vignette, rather than through unconstrained yaw and pitch rotation."
+   → "…moves at speeds the user controls (three fixed speeds by voice, or in proportion to the thumbstick, up to the normal speed), and turns only about the vertical axis, smoothly and with a comfort vignette, rather than through unconstrained yaw and pitch rotation."
 
 ### §2.5 LLMs for VR Navigation (p. 19)
 
@@ -54,7 +56,7 @@ The decisions behind them: world order Plain → Maze → House; SSQ before the 
 14. **Tense and assignment.** Now: *"The study employed a rigorous between-subjects design… Participants were randomly and equally allocated…"*
     → "The study will employ a between-subjects design… Participants will be randomly assigned, in balanced blocks, to one of two conditions (15 each):"
 15. **Control group.** Now: *"(thumbstick-driven locomotion and snap/smooth turning)"*
-    → "(thumbstick-driven continuous movement and smooth turning with a comfort vignette, at the same three selectable speeds as ROVR)"
+    → "(thumbstick-driven continuous movement, faster the further the stick is pushed, up to ROVR's normal speed, and smooth turning with a comfort vignette)"
 16. **New sentence** after the two conditions:
     → "In both conditions, participants will be seated on a swivel chair throughout, so they can turn their body without walking."
 
@@ -75,7 +77,7 @@ The decisions behind them: world order Plain → Maze → House; SSQ before the 
     → "Bounded by generic labels for the objects in the participant's current view (for example door, chair, sofa or fridge)"
     And for the rooms: "…sequentially visit, in a fixed order, the living area, bathroom, kitchen and bedroom." Name which bathroom: the ensuite off the bedroom, or the powder room by the kitchen.
 22. **Speed**, after the rest-period paragraph:
-    → "In both conditions, participants can switch between three walking speeds: by voice in ROVR, and with buttons on the control panel in the controller condition. Every speed change is logged."
+    → "In ROVR, participants can switch between three walking speeds (1, 2 and 3 m/s) by voice, and every speed change is logged. In the controller condition, speed follows how far the left thumbstick is pushed, up to 2 m/s (ROVR's normal speed), and each stretch of movement is logged with its distance, duration and top speed."
 
 ### §7.1.3 Evaluation Metrics and Instruments (p. 65–66)
 
@@ -88,7 +90,7 @@ The decisions behind them: world order Plain → Maze → House; SSQ before the 
 26. **SSQ.** Now: *"…administered before and after each session…"*
     → "…administered before the first environment, as a baseline, and after each environment, and analysed as the change from baseline…"
 27. **Task Completion Time**, add to the end of the bullet:
-    → "The same logs will record every speed change and, in the ROVR condition, every voice command and the system's response."
+    → "The same logs will record, in the ROVR condition, every voice command, the system's response and every speed change, and in the controller condition each stretch of movement or turning."
 
 ### §7.1.4 Think-Aloud Protocol (p. 66)
 
