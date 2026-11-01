@@ -8,7 +8,8 @@
 //
 // Every wall, prop, floor and the roof is a solid collider, so a CharacterController can't pass
 // through them; the only openings are the door gaps. `Door` objects are trigger markers that
-// sit in those gaps and never block movement.
+// sit in those gaps and never block movement. Each gap has a door frame and two door leaves,
+// swung right open (see BuildDoors).
 //
 // FURNITURE: uses the Kenney Furniture Kit (CC0, https://kenney.nl/assets/furniture-kit).
 // The models live in Assets/Resources/Props/<name>.fbx and the 4th argument of each Prop below
@@ -28,6 +29,10 @@
 //     length / depth. The kit models keep their own proportions.
 // The prop root carries the tag and ONE solid BoxCollider, so raycasts (FOV grounding, stop-at
 // conditions) hit a correctly tagged object, and CollisionCheck sees every mesh as covered.
+//
+// DOORS: also from the Furniture Kit (doorwayOpen for the frame, the leaf of doorway). A 2 m gap is
+// twice one kit door, so each gets a double door: the frame fitted to the gap, and two leaves of the
+// kit's own size, folded flat against the wall into the room the door opens into (DoorSwing).
 //
 // DECOR: potted plants, a cactus and a few small stone statues come from the Kenney Nature Kit
 // (CC0), in Assets/Resources/Props/Nature. They are sized by target height in metres. A statue,
@@ -106,6 +111,7 @@ public static class HouseGenerator
         BuildFloorAndRoof(root);
         BuildWalls(root);
         BuildProps(root);
+        BuildDoors(root);
         BuildLights(root);
 
         var start = new GameObject("Start").transform;
@@ -539,6 +545,132 @@ public static class HouseGenerator
             }
             if (!moved) return;
         }
+    }
+
+    // ---- Doors ----------------------------------------------------------------------------------
+    // Which side of its wall each doorway's leaves fold back against, by the doorway's centre (x, z):
+    // +1 toward +X / +Z, -1 toward -X / -Z. Each door opens into the room behind it; the entrance into the hall.
+    static readonly (float x, float z, float side)[] DoorSwing =
+    {
+        (12f, 0f, 1f),   // entrance: into the hall
+        (9f, 5f, -1f),   // living room
+        (9f, 13f, -1f),  // bedroom
+        (15f, 5f, 1f),   // kitchen
+        (15f, 17f, 1f),  // powder room
+        (4f, 17f, -1f),  // ensuite
+    };
+
+    const float FrameProud = 0.02f;    // the frame stands proud of both wall faces, like the baseboards
+    const float LeafClearance = 0.03f; // between an open leaf and the wall face, clear of the baseboard
+    const float LeafLift = 0.01f;      // under the leaves
+
+    // A frame in every doorway, under its `Door` marker and tagged Door, so a doorway is still one
+    // "door" to the LLM (and "go to the door" still aims at the middle of the gap). Its jambs and head
+    // are solid, colliders on the marker; the opening between them stays clear. The two leaves lie
+    // open against the wall, tagged Wall like the baseboards: part of the wall now, not a place to go.
+    static void BuildDoors(Transform root)
+    {
+        var frameModel = Resources.Load<GameObject>("Props/doorwayOpen");
+        var doorModel = Resources.Load<GameObject>("Props/doorway");
+        var leafModel = doorModel != null ? doorModel.transform.Find("door") : null;
+        if (frameModel == null || leafModel == null)
+        {
+            Debug.LogWarning("[ROVR House] No door models (Assets/Resources/Props/doorwayOpen and doorway): the doorways are left as open gaps.");
+            return;
+        }
+
+        float k = KitScale / KitUnit();
+        var doors = root.Find("Doors");
+        var markers = new List<Transform>();
+        foreach (Transform t in doors) markers.Add(t);
+        foreach (var marker in markers)
+            BuildDoor(marker, frameModel, leafModel.gameObject, k, doors, root);
+    }
+
+    static void BuildDoor(Transform marker, GameObject frameModel, GameObject leafModel, float k, Transform doors, Transform root)
+    {
+        var gap = marker.GetComponent<BoxCollider>();
+        bool alongX = gap.size.x > gap.size.z;                // the wall runs along X
+        float width = alongX ? gap.size.x : gap.size.z;
+        float depth = WorldKit.WallThickness + 2f * FrameProud;
+        Vector3 c = marker.position;                          // middle of the gap, DoorHeight / 2 up
+        float floor = c.y - WorldKit.DoorHeight / 2f;
+        float along = alongX ? c.x : c.z, across = alongX ? c.z : c.x;
+        float side = SwingSide(c);
+        Vector3 Point(float a, float y, float n) => alongX ? new Vector3(a, y, n) : new Vector3(n, y, a);
+
+        // Native sizes, measured un-turned: x across the opening, y up, z through the wall.
+        var frame = Spawn(frameModel, marker, 1f);
+        Vector3 frameSize = RenderBounds(frame).size;
+        var leafProbe = Object.Instantiate(leafModel, marker);
+        leafProbe.transform.localPosition = Vector3.zero;
+        leafProbe.transform.localRotation = Quaternion.identity;
+        leafProbe.transform.localScale = Vector3.one;
+        Bounds probe = RenderBounds(leafProbe);
+        Vector3 leafSize = probe.size;
+        // The leaf's pivot is its hinge: +1 if that's its +X edge (import can mirror the model).
+        float hinge = leafProbe.transform.position.x > probe.center.x ? 1f : -1f;
+        Object.DestroyImmediate(leafProbe);
+
+        // The frame fills the gap; its jambs and head scale with it.
+        frame.transform.localScale = new Vector3(width / frameSize.x, WorldKit.DoorHeight / frameSize.y, depth / frameSize.z);
+        frame.transform.localRotation = Quaternion.Euler(0f, alongX ? 0f : 90f, 0f);
+        Bounds fb = RenderBounds(frame);
+        frame.transform.position += new Vector3(c.x - fb.center.x, floor - fb.min.y, c.z - fb.center.z);
+        TagAll(frame, "Door");
+
+        float jamb = width * (1f - leafSize.x / frameSize.x) / 2f;
+        float head = WorldKit.DoorHeight * (1f - leafSize.y / frameSize.y);
+        AddSolidBox(marker, Point(along - width / 2f + jamb / 2f, c.y, across), Point(jamb, WorldKit.DoorHeight, depth));
+        AddSolidBox(marker, Point(along + width / 2f - jamb / 2f, c.y, across), Point(jamb, WorldKit.DoorHeight, depth));
+        AddSolidBox(marker, Point(along, floor + WorldKit.DoorHeight - head / 2f, across), Point(width - 2f * jamb, head, depth));
+
+        // Two leaves, each hinged at a jamb and swung right round, flat against the wall beside the gap.
+        float leafWidth = (width - 2f * jamb) / 2f;
+        float leafHeight = WorldKit.DoorHeight - head - LeafLift;
+        var props = root.Find("Props");
+        var decor = root.Find("Decor");
+        foreach (float end in new[] { -1f, 1f })
+        {
+            var leaf = Object.Instantiate(leafModel, doors);
+            leaf.name = "Door Leaf";
+            leaf.transform.localPosition = Vector3.zero;
+            leaf.transform.localScale = new Vector3(leafWidth / leafSize.x, leafHeight / leafSize.y, k);
+            // Turn the hinge edge toward the gap, so the handle ends up at the free edge.
+            bool hingeTowardPlus = hinge * -end > 0f;
+            float yaw = alongX ? (hingeTowardPlus ? 0f : 180f) : (hingeTowardPlus ? -90f : 90f);
+            leaf.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+
+            Bounds lb = RenderBounds(leaf);
+            float thickness = alongX ? lb.size.z : lb.size.x;
+            Vector3 target = Point(along + end * (width / 2f - jamb + leafWidth / 2f), floor + LeafLift + lb.size.y / 2f,
+                                   across + side * (WorldKit.WallThickness / 2f + LeafClearance + thickness / 2f));
+            leaf.transform.position += target - lb.center;
+            leaf.AddComponent<BoxCollider>();
+            TagAll(leaf, "Wall");
+
+            // An open leaf needs bare wall: say so if furniture or a plant is in the way.
+            Physics.SyncTransforms();
+            Bounds b = leaf.GetComponent<Collider>().bounds;
+            foreach (var hit in Physics.OverlapBox(b.center, b.extents * 0.98f, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore))
+                if ((props != null && hit.transform.IsChildOf(props)) || (decor != null && hit.transform.IsChildOf(decor)))
+                    Debug.LogWarning("[ROVR House] An open door leaf at " + b.center.ToString("F1") + " runs into '" + hit.name + "'");
+        }
+    }
+
+    static float SwingSide(Vector3 doorway)
+    {
+        foreach (var d in DoorSwing)
+            if (Mathf.Abs(d.x - doorway.x) < 0.1f && Mathf.Abs(d.z - doorway.z) < 0.1f) return d.side;
+        Debug.LogWarning("[ROVR House] No DoorSwing entry for the doorway at " + doorway.ToString("F1") + ": its leaves fold toward +X / +Z.");
+        return 1f;
+    }
+
+    static void AddSolidBox(Transform on, Vector3 worldCenter, Vector3 size)
+    {
+        var box = on.gameObject.AddComponent<BoxCollider>();
+        box.center = on.InverseTransformPoint(worldCenter);
+        box.size = size;
     }
 
     static GameObject Spawn(GameObject prefab, Transform parent, float scale)

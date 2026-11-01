@@ -53,7 +53,7 @@ Floor plans are in [`rovr-house-floorplan.svg`](rovr-house-floorplan.svg), [`rov
 - 47 furnishings define the rooms: sofa, two armchairs, coffee table and TV in the living room; stove, fridge, sink, island with stools and a six-chair dining table in the kitchen; bed, desk and wardrobe in the bedroom; toilets, vanities and a shower; two stools in the hall.
 - **Decor** from the Nature Kit: 10 potted plants (4 in the hall, 2 in the living room, 2 in the bedroom, 2 in the dining area), a small plant on a nightstand, a cactus on the living-room side table, and two stone statues (a head on the hall console table, a column on the China cabinet). Items on furniture sit on that prop's measured top.
 - **Warm look:** cream walls and ceiling, an oak floor, and dark baseboards along every wall (not over doorways).
-- Doorways are 2 m wide with a lintel above. Each has a `Door` marker that doesn't block movement.
+- Doorways are 2 m wide with a lintel above. Each has a `Door` marker that doesn't block movement, a wooden door frame, and a double door standing open: its two leaves are folded flat against the wall of the room the door opens into (the entrance's into the hall). The frame's jambs and head are solid; the 1.8 m between the jambs is clear. The table `DoorSwing` in `HouseGenerator.cs` says which side each door opens to, and generating warns if an open leaf would run into furniture or a plant.
 - Point lights in every room, and a `Roof` object. **Disable `Roof` to look down into the rooms** in the Scene view.
 - `Start` is just inside the entrance, facing north.
 
@@ -82,18 +82,18 @@ A two-storey version (stairs and an upstairs master suite) is in git commit `f54
 
 | Tag | On | Seen by the LLM by default |
 |---|---|---|
-| `Wall` | All walls and lintels | Yes |
-| `Door` | Doorway markers (triggers) | Yes |
+| `Wall` | All walls and lintels, baseboards, and the House's open door leaves | Yes |
+| `Door` | Doorway markers (triggers), and the House's door frames | Yes |
 | `Chair` | Chairs, armchair, stools | Yes |
 | `Tree` | The Plain's tree | Yes |
 | `Furniture` | All other House furnishings | No |
 | `Goal` | The Maze's goal trigger | No |
 
-Walls and doors are named by their tag. What the LLM is told about is described in [`Unity Navigation/`](../Unity%20Navigation/README.md).
+Walls and doors are named by their tag. A door frame sits under its doorway's marker, so the LLM sees a doorway as one door, and "go to the door" aims at the middle of the gap. The open leaves count as wall. What the LLM is told about is described in [`Unity Navigation/`](../Unity%20Navigation/README.md).
 
 ## Collision
 
-Every wall, prop, floor, roof and the tree is a solid collider, so a `CharacterController` can't pass through them. The only openings are the doorways, the maze entrance and exit, and the plain's open edge. The `Door` and `Goal` triggers and the flat start/goal pads are intentionally non-blocking.
+Every wall, prop, floor, roof and the tree is a solid collider, so a `CharacterController` can't pass through them. So are the House's door frames (jambs and head) and open door leaves. The only openings are the doorways, the maze entrance and exit, and the plain's open edge. The `Door` and `Goal` triggers and the flat start/goal pads are intentionally non-blocking.
 
 **Tools > ROVR > Check Collisions** verifies this after you generate. It confirms every visible object has a solid collider, then drives a `CharacterController` around each world at random and reports any point where it passes through something. Re-run it after changing any generator.
 
@@ -107,7 +107,7 @@ Flat-colour materials (the Plain's grass and water, the House's cream, oak and t
 
 **The Maze is a hedge maze on a pale gravel floor.** Walls and floor use the `ROVR/WorldSpaceTiled` shader (`Assets/Shaders/`), which tiles a texture by real-world position. That keeps the texture the same size on every wall and stops it stretching along the long wall pieces. The two seamless textures (`MazeHedge.png`, `MazeGround.png`) are in `Assets/Resources/Props/Maze/`. To change how large the texture looks, edit "Metres per texture repeat" on `ROVR_MazeWallTiled` / `ROVR_MazeFloorTiled` in `Generated/`. The maze deliberately has no decoration or landmarks, so keep any replacement look uniform.
 
-**The House uses the [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit)** (CC0, credit optional). Its 28 models are in `Assets/Resources/Props/` and `HouseGenerator.cs` places them, so the furnishings, walls, ceiling and floor share one low-poly, flat-colour style. The house is about 21,000 triangles of furniture in total.
+**The House uses the [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit)** (CC0, credit optional). Its 30 models are in `Assets/Resources/Props/` and `HouseGenerator.cs` places them, so the furnishings, doors, walls, ceiling and floor share one low-poly, flat-colour style. The doors use `doorwayOpen` (the frame) and the leaf of `doorway`. The house is about 21,000 triangles of furniture in total.
 
 | Put this in `Assets/Resources/Props/` | To replace |
 |---|---|

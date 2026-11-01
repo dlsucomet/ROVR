@@ -28,14 +28,13 @@ Voice navigation runs through the LLM in `Assets/main.unity`:
 | World generators | `Assets/Editor/` (copies in `Unity Environments/`) |
 
 **Done:**
-- the three worlds (solid collision, hedge maze);
+- the three worlds (solid collision, hedge maze, doors in the House);
 - voice + LLM navigation (tested headless with the real model, and on a Quest 3S with its microphone);
 - the controller (Manual) condition;
 - running a session from the PC: participant code and condition, the practice area, tasks with timing, and a task CSV.
 
 **Not done:**
 - the real tasks and practice area: both are **placeholders** for now (see step 4);
-- doors in the House doorways;
 - questionnaires.
 
 ## Requirements
