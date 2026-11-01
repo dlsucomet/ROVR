@@ -178,6 +178,7 @@ Command: go to the lamp (no lamp in the visible objects list)
         {
             requestId++;
             controller.Halt();
+            controller.ForgetPath();
             Habits.Reset();
             lastCommand = null;
             lastOutcome = null;
@@ -240,6 +241,13 @@ Command: go to the lamp (no lamp in the visible objects list)
                 return;
             }
 
+            // "Go back" / "undo that": the engine undoes the last command itself (never the model).
+            if (GoBackWords.IsGoBack(utterance))
+            {
+                GoBack();
+                return;
+            }
+
             // "More" / "again" mean nothing without a command to repeat. Say so without asking the model,
             // which would otherwise invent one.
             if (IsBareFollowUp(utterance) && !HasRecentCommand())
@@ -262,6 +270,27 @@ Command: go to the lamp (no lamp in the visible objects list)
             }
 
             Resolve(utterance);
+        }
+
+        // Undoes the last command: stops what's running, then turns round, walks back and faces the way the
+        // user faced before it (NavigationController.PlanGoBack). Said again, it undoes the undo.
+        void GoBack()
+        {
+            requestId++; // anything still waiting on the LLM is superseded
+            ClearChoice();
+            controller.Halt();
+            var undo = controller.PlanGoBack();
+            if (undo == null)
+            {
+                OnStatus?.Invoke("There's nothing to go back to yet.");
+                return;
+            }
+            OnCommandResolved?.Invoke(undo);
+            lastCommand = undo; // not for learning "a bit": its moves aren't the user's
+            lastOutcome = null;
+            lastCommandTime = Time.time;
+            pendingClarification = null;
+            controller.Execute(undo);
         }
 
         bool HasRecentCommand()

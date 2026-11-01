@@ -781,6 +781,7 @@ public class VRControlPanel : MonoBehaviour
     // "Taking 3 steps forward", "Taking 3 steps toward the tree", "Walking in steps to the door"
     private string Describe(NavigationCommand command)
     {
+        if (!string.IsNullOrEmpty(command.summary)) return command.summary; // made by the engine ("Going back")
         var parts = new System.Collections.Generic.List<string>();
         foreach (var step in command.steps)
         {

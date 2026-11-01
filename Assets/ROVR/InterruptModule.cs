@@ -56,7 +56,8 @@ namespace ROVR
                 if (!StartsWithWord(t, lead)) continue;
 
                 string rest = t.Substring(lead.Length).Trim();
-                bool correction = StartsWithAny(rest, CorrectionCues);
+                // "Wait, go back" is a correction too: stop, then undo the move (GoBackWords).
+                bool correction = StartsWithAny(rest, CorrectionCues) || GoBackWords.IsGoBack(rest);
                 return new InterruptResult { isHalt = true, remainder = correction ? StripCues(rest) : string.Empty };
             }
 

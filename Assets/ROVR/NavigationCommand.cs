@@ -107,6 +107,7 @@ namespace ROVR
         public string clarificationPrompt;
         public string which = string.Empty;     // how the user singled out one of several objects, if they did
         public string whichNear = string.Empty; // "the tree by the pond": pond
+        public string summary;                  // what the panel says, for a command the engine made itself ("Going back")
 
         public bool IsClarification => !string.IsNullOrEmpty(clarificationPrompt);
         public bool HasChoice => which.Length > 0 || whichNear.Length > 0;

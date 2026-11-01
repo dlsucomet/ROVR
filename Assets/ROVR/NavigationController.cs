@@ -11,6 +11,7 @@
 // OnCommandFinished, so nothing fails silently and a blocked step can't stall a chain.
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ROVR
@@ -85,8 +86,55 @@ namespace ROVR
                 return;
             }
 
+            // For "go back": where this command starts, and which way the user faces.
+            path.Clear();
+            startYaw = HeadYaw();
             current = command;
             activeRoutine = StartCoroutine(RunSteps(command));
+        }
+
+        // ---------------------------------------------------------------- "go back"
+
+        // Where each move of the last command started (it records as it goes, so a command halted halfway
+        // has only the moves it actually made), and which way the user faced before it.
+        readonly List<Vector3> path = new List<Vector3>();
+        float startYaw;
+
+        // Between participants: there's nothing to go back to.
+        public void ForgetPath() { path.Clear(); }
+
+        // The command that undoes the last one, from where the user is now: for each move, last first, turn
+        // to face where it started and walk there; then turn to face the way the user faced before it. A
+        // single move comes out as "turn round, walk back, turn round"; a lone turn as the turn back.
+        // Null if there's nothing to undo.
+        public NavigationCommand PlanGoBack()
+        {
+            var steps = new List<NavigationStep>();
+            Vector3 at = transform.position;
+            float yaw = HeadYaw();
+            bool any = false;
+            for (int i = path.Count - 1; i >= 0; i--)
+            {
+                Vector3 to = path[i] - at;
+                to.y = 0f;
+                if (to.magnitude < 0.05f) continue;
+                float face = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+                AddTurn(steps, Mathf.DeltaAngle(yaw, face));
+                steps.Add(new NavigationStep { action = ActionType.Move, direction = DirectionType.Forward, amount = AmountType.Exact, magnitude = to.magnitude, condition = string.Empty });
+                yaw = face;
+                at = path[i];
+                any = true;
+            }
+            float back = Mathf.DeltaAngle(yaw, startYaw);
+            if (!any && Mathf.Abs(back) < 2f) return null;
+            AddTurn(steps, back);
+            return steps.Count == 0 ? null : new NavigationCommand { steps = steps.ToArray(), summary = "Going back" };
+        }
+
+        static void AddTurn(List<NavigationStep> steps, float degrees)
+        {
+            if (Mathf.Abs(degrees) < 2f) return;
+            steps.Add(new NavigationStep { action = ActionType.Turn, direction = degrees < 0f ? DirectionType.Left : DirectionType.Right, amount = AmountType.Exact, magnitude = Mathf.Abs(degrees), condition = string.Empty });
         }
 
         // Called by the Interrupt Module (bypasses the LLM) and by Execute() before a new command.
@@ -111,6 +159,7 @@ namespace ROVR
             foreach (var step in command.steps)
             {
                 stepOutcome = CommandOutcome.Completed;
+                if (step.action == ActionType.Move) path.Add(transform.position);
                 yield return RunStep(step);
 
                 if (stepOutcome != CommandOutcome.Completed)
