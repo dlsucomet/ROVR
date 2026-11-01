@@ -167,11 +167,11 @@ public static class PanelBuilder
         title.fontStyle = FontStyle.Bold;
         Box("DiagramFrame", go.transform, rounded, Faint, new Vector2(0f, 15f), new Vector2(560f, 270f)).pixelsPerUnitMultiplier = 0.4f;
         var label = Label("DiagramLabel", go.transform, "PLACEHOLDER", 22, SoftText, new Vector2(0f, 15f), new Vector2(520f, 240f));
-        Label("Hint", go.transform, "Press A to continue", 20, SoftText, new Vector2(-90f, -180f), new Vector2(360f, 40f));
+        var hint = Label("Hint", go.transform, "Press A to continue", 20, SoftText, new Vector2(-90f, -180f), new Vector2(360f, 40f));
         var close = PillButton("CloseButton", go.transform, "Close", new Vector2(200f, -180f));
 
         var card = go.AddComponent<TutorialCard>();
-        card.canvas = canvas; card.title = title; card.diagramLabel = label; card.closeButton = close; card.follow = follow;
+        card.canvas = canvas; card.title = title; card.diagramLabel = label; card.closeButton = close; card.hint = hint; card.follow = follow;
         go.AddComponent<UIOnTop>();
         return card;
     }

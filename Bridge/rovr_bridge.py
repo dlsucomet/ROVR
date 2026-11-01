@@ -9,6 +9,11 @@
   (Assets/StreamingAssets/ggml-base.bin). The audio is not saved, only the text.
 - Prints each voice command live: what was heard, what is in view, the model's reply and how
   long it took. Also accepts plain log lines on POST /log (buttons, teleports, ...).
+- Runs the study session: the operator's control page at http://127.0.0.1:8765/control (this PC
+  only) sets the participant code and condition, moves them between worlds and starts, skips and
+  restarts tasks; the headset picks the commands up and reports back twice a second. Each task's
+  result is saved in Bridge/logs/tasks_<code>_<date>_<time>.csv. The same commands can be typed here:
+  setup PP1 rovr | setup PP1 manual | practice | plain | maze | house | start | skip | restart
 - Saves everything to Bridge/logs/bridge_<date>_<time>.txt.
 
 Only the Python standard library is used. Run from the project folder:
@@ -34,6 +39,7 @@ import io
 import ipaddress
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -43,6 +49,7 @@ import urllib.request
 import uuid
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import deque
 from threading import Lock, Thread
 
 # ---- terminal output ----------------------------------------------------------------------
@@ -53,6 +60,8 @@ GREY, GREEN, YELLOW, RED, CYAN, BOLD, RESET = "\033[90m", "\033[92m", "\033[93m"
 
 _print_lock = Lock()
 _log_file = None
+_recent = deque(maxlen=40)  # the latest lines, for the control page
+_colour_codes = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def log(kind, text, colour=""):
@@ -60,8 +69,10 @@ def log(kind, text, colour=""):
     stamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
     with _print_lock:
         print(f"{GREY}{stamp}{RESET}  {colour}{kind:<8}{RESET}  {text}", flush=True)
+        plain = _colour_codes.sub("", str(text))
+        _recent.append(f"{stamp[:8]}  {kind:<8}  {plain}")
         if _log_file:
-            _log_file.write(f"{datetime.date.today()} {stamp}  {kind:<8}  {text}\n")
+            _log_file.write(f"{datetime.date.today()} {stamp}  {kind:<8}  {plain}\n")
             _log_file.flush()
 
 
@@ -254,6 +265,178 @@ def answer_headsets(sock, port):
         last_logged[ip] = time.time()
 
 
+# ---- the study session (Assets/GUI/StudySession.cs on the headset) -----------------------
+
+class Session:
+    lock = Lock()
+    commands = []     # {"id", "kind", "code", "condition", "world"}, oldest first
+    next_id = 1
+    state = {}        # what the headset last said: code, condition, world, task, tasks, instruction, status, seconds
+    seen = 0.0        # when the headset last synced (time.time())
+    logs = ""         # Bridge/logs
+    stamp = ""        # this run's date and time, for the CSV names
+
+
+WORLDS = ("practice", "plain", "maze", "house")
+CSV_COLUMNS = ["participant", "condition", "world", "task", "instruction", "outcome", "seconds", "started", "ended"]
+
+
+def command(kind, code="", condition="", world=""):
+    """Queues a command for the headset, which picks it up on its next sync."""
+    with Session.lock:
+        c = {"id": Session.next_id, "kind": kind, "code": code, "condition": condition, "world": world}
+        Session.next_id += 1
+        Session.commands.append(c)
+        del Session.commands[:-50]
+    log("CONTROL", " ".join(x for x in (kind, code, condition, world) if x), CYAN)
+    return c
+
+
+def parse_command(text):
+    """'setup PP1 rovr', 'plain', 'start'... -> queued, or an error message."""
+    words = text.strip().lower().split()
+    if not words:
+        return None
+    if words[0] == "setup":
+        if len(words) != 3 or words[2] not in ("rovr", "manual"):
+            return "usage: setup <code> rovr|manual"
+        command("setup", code=words[1].upper(), condition="Manual" if words[2] == "manual" else "ROVR")
+    elif words[0] in WORLDS or (words[0] == "world" and len(words) == 2 and words[1] in WORLDS):
+        command("world", world=(words[-1]).capitalize())
+    elif words[0] in ("start", "skip", "restart"):
+        command(words[0])
+    else:
+        return "commands: setup <code> rovr|manual, practice, plain, maze, house, start, skip, restart"
+    return None
+
+
+def read_typed_commands():
+    """Commands typed into the bridge window (a thread; ends quietly if there's no keyboard)."""
+    try:
+        for line in sys.stdin:
+            problem = parse_command(line)
+            if problem:
+                log("CONTROL", problem, YELLOW)
+    except (OSError, ValueError):
+        pass
+
+
+def save_task(result):
+    """One row per finished task, in a CSV per participant code."""
+    import csv
+    code = re.sub(r"[^A-Za-z0-9_-]", "", str(result.get("code") or "")) or "no-code"
+    path = os.path.join(Session.logs, f"tasks_{code}_{Session.stamp}.csv")
+    new = not os.path.exists(path)
+    row = {"participant": result.get("code", ""), "condition": result.get("condition", ""), "world": result.get("world", ""),
+           "task": result.get("task", ""), "instruction": result.get("instruction", ""), "outcome": result.get("outcome", ""),
+           "seconds": f"{float(result.get('seconds') or 0):.2f}", "started": result.get("started", ""), "ended": result.get("ended", "")}
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        if new:
+            writer.writeheader()
+        writer.writerow(row)
+    log("TASK", f"{row['world']} task {row['task']}: {row['outcome']} in {row['seconds']} s  {GREY}[{os.path.basename(path)}]{RESET}", GREEN)
+
+
+CONTROL_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROVR session control</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6b7385; --line:#dfe3ea; --accent:#2f6fe4; --ok:#1f9d55; --warn:#c77d00; --bad:#c43c3c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:860px; margin:0 auto; padding:20px 16px 40px; display:grid; gap:14px; }
+  h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--bad); display:inline-block; }
+  .dot.on { background:var(--ok); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  input, select, button { font:inherit; border-radius:8px; border:1px solid var(--line); padding:8px 12px; background:#fff; color:var(--text); }
+  input { width:110px; text-transform:uppercase; }
+  button { cursor:pointer; background:#eef1f6; }
+  button:hover { background:#e2e7f0; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.primary:hover { filter:brightness(1.07); }
+  .who { font-size:16px; font-weight:600; }
+  .instr { font-size:20px; font-weight:600; margin:6px 0 4px; min-height:28px; }
+  .status { display:flex; gap:18px; align-items:baseline; margin:4px 0 12px; color:var(--muted); }
+  .timer { font:600 34px/1 ui-monospace, Consolas, monospace; color:var(--text); }
+  .badge { font-size:13px; padding:2px 8px; border-radius:99px; background:#eef1f6; color:var(--muted); }
+  .badge.running { background:#e5f6ec; color:var(--ok); }
+  .badge.ready { background:#fff4dc; color:var(--warn); }
+  pre { margin:0; max-height:300px; overflow:auto; font:12px/1.5 ui-monospace, Consolas, monospace; white-space:pre-wrap; }
+  .note { color:var(--muted); font-size:13px; }
+</style></head><body><main>
+<h1><span id="dot" class="dot"></span> ROVR session control <span id="link" class="note"></span></h1>
+
+<section><h2>Participant</h2>
+  <div class="row">
+    <input id="code" placeholder="PP1" maxlength="8" aria-label="Participant code">
+    <select id="condition" aria-label="Condition"><option value="ROVR">ROVR (voice)</option><option value="Manual">Manual (controller)</option></select>
+    <button class="primary" onclick="setup()">Set up</button>
+    <span class="who" id="who"></span>
+  </div>
+  <p class="note">Set up moves them to the practice area and shows their tutorial.</p>
+</section>
+
+<section><h2>World</h2>
+  <div class="row">
+    <button onclick="send({kind:'world', world:'Practice'})">Practice</button>
+    <button onclick="send({kind:'world', world:'Plain'})">Plain</button>
+    <button onclick="send({kind:'world', world:'Maze'})">Maze</button>
+    <button onclick="send({kind:'world', world:'House'})">House</button>
+  </div>
+</section>
+
+<section><h2>Task <span id="taskno"></span></h2>
+  <div class="instr" id="instr">No task</div>
+  <div class="status"><span class="timer" id="timer">0.0 s</span><span class="badge" id="status">-</span></div>
+  <div class="row">
+    <button class="primary" onclick="send({kind:'start'})">Start (F5)</button>
+    <button onclick="send({kind:'skip'})">Skip</button>
+    <button onclick="send({kind:'restart'})">Restart</button>
+  </div>
+  <p class="note">Read the instruction, say "go", then Start. The task ends by itself when they reach the goal. Results: <span id="csv">Bridge/logs/tasks_&lt;code&gt;_*.csv</span></p>
+</section>
+
+<section><h2>Log</h2><pre id="log"></pre></section>
+</main>
+<script>
+async function send(c) {
+  await fetch('/control/command', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(c) });
+  refresh();
+}
+function setup() {
+  const code = document.getElementById('code').value.trim().toUpperCase();
+  if (!code) { document.getElementById('code').focus(); return; }
+  send({kind:'setup', code, condition: document.getElementById('condition').value});
+}
+document.addEventListener('keydown', e => { if (e.key === 'F5') { e.preventDefault(); send({kind:'start'}); } });
+async function refresh() {
+  try {
+    const r = await (await fetch('/control/status')).json();
+    const s = r.state || {};
+    document.getElementById('dot').className = 'dot' + (r.connected ? ' on' : '');
+    document.getElementById('link').textContent = r.connected ? 'headset connected' : 'headset not connected';
+    document.getElementById('who').textContent = s.code ? s.code + ' \u00b7 ' + s.condition + (s.world ? ' \u00b7 ' + s.world : '') : 'not set up';
+    document.getElementById('taskno').textContent = s.tasks ? (s.task <= s.tasks ? s.task + ' of ' + s.tasks : 'all done') : '';
+    document.getElementById('instr').textContent = s.instruction || (s.tasks ? 'No more tasks in this world' : 'No task');
+    document.getElementById('timer').textContent = (s.seconds || 0).toFixed(1) + ' s';
+    const st = document.getElementById('status');
+    st.textContent = s.status || '-';
+    st.className = 'badge ' + (s.status || '');
+    document.getElementById('log').textContent = r.recent.slice().reverse().join('\n');
+  } catch (e) {
+    document.getElementById('link').textContent = 'bridge not answering';
+  }
+}
+setInterval(refresh, 500);
+refresh();
+</script></body></html>
+"""
+
+
 # ---- the server ---------------------------------------------------------------------------
 
 class Bridge(BaseHTTPRequestHandler):
@@ -282,10 +465,26 @@ class Bridge(BaseHTTPRequestHandler):
         self._reply(403, b"only devices on the local network", "text/plain")
         return False
 
+    # The control page is for the operator on this PC only, even when the bridge listens on Wi-Fi.
+    def _from_this_pc(self):
+        if ipaddress.ip_address(self.client_address[0]).is_loopback:
+            return True
+        self.close_connection = True
+        self._reply(403, b"the control page is for this PC only", "text/plain")
+        return False
+
     def do_GET(self):
         if not self._allowed():
             return
-        if self.path == "/ping":
+        if self.path in ("/control", "/control/"):
+            if self._from_this_pc():
+                self._reply(200, CONTROL_PAGE.encode("utf-8"), "text/html; charset=utf-8")
+        elif self.path == "/control/status":
+            if self._from_this_pc():
+                with Session.lock:
+                    status = {"connected": time.time() - Session.seen < 3, "state": Session.state, "recent": list(_recent)}
+                self._reply(200, json.dumps(status).encode())
+        elif self.path == "/ping":
             # BridgeLink.cs checks with this that it found a ROVR bridge, and that it still answers.
             self._reply(200, ("rovr-bridge " + socket.gethostname()).encode(), "text/plain")
         elif self.path == "/health":
@@ -306,12 +505,53 @@ class Bridge(BaseHTTPRequestHandler):
             return
         if self.path == "/log":
             self._log_line(body)
+        elif self.path == "/session/sync":
+            self._session_sync(body)
+        elif self.path == "/session/task":
+            try:
+                save_task(json.loads(body))
+                self._reply(200, b"{}")
+            except (ValueError, OSError) as e:
+                log("ERROR", f"task result not saved: {e}", RED)
+                self._reply(400, json.dumps({"error": str(e)}).encode())
+        elif self.path == "/control/command":
+            if self._from_this_pc():
+                try:
+                    c = json.loads(body)
+                    kind = str(c.get("kind", "")).lower()
+                    if kind == "setup":
+                        command("setup", code=str(c.get("code", "")).upper(), condition="Manual" if str(c.get("condition")) == "Manual" else "ROVR")
+                    elif kind == "world":
+                        command("world", world=str(c.get("world", "")))
+                    elif kind in ("start", "skip", "restart"):
+                        command(kind)
+                    self._reply(200, b"{}")
+                except ValueError:
+                    self._reply(400, b"{}")
         elif self.path.split("?")[0] == "/transcribe":
             self._transcribe(body, "kind=partial" not in self.path)
         elif self.path.startswith("/api/"):
             self._forward(body)
         else:
             self._reply(404, b"not found", "text/plain")
+
+    # The headset's state in, any newer commands out. On its first sync (after = -1) it is told where the
+    # commands are up to and gets none, so a restarted app doesn't replay old ones.
+    def _session_sync(self, body):
+        try:
+            state = json.loads(body)
+        except ValueError:
+            self._reply(400, b"{}")
+            return
+        after = int(state.pop("after", -1))
+        with Session.lock:
+            first = Session.seen == 0 or time.time() - Session.seen > 10
+            Session.state, Session.seen = state, time.time()
+            latest = Session.next_id - 1
+            pending = [] if after < 0 else [c for c in Session.commands if c["id"] > after]
+        if first:
+            log("SESSION", "headset connected" + (f" ({state.get('code')}, {state.get('condition')})" if state.get("code") else ""), GREEN)
+        self._reply(200, json.dumps({"commands": pending, "latest": latest}).encode())
 
     # A WAV file from the game -> {"text": "..."}. Sentences are printed; the sentence-so-far pieces
     # (sent every half second while someone speaks, for live captions and "stop") only when slow.
@@ -423,6 +663,7 @@ def main():
     logs = os.path.join(HERE, "logs")
     os.makedirs(logs, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    Session.logs, Session.stamp = logs, stamp
     path = os.path.join(logs, "bridge_" + stamp + ".txt")
     _log_file = open(path, "w", encoding="utf-8")
 
@@ -461,7 +702,10 @@ def main():
             print(f"Wi-Fi: {YELLOW}on, but this PC has no local-network address. Is it connected?{RESET}")
     else:
         print(f"Wi-Fi: off (cable and this PC only). For a headset on Wi-Fi: run_bridge_wifi.bat, or --wifi.")
+    print(f"Session control: {BOLD}http://127.0.0.1:{args.port}/control{RESET} (this PC only), or type here: "
+          f"setup PP1 rovr | plain | start | skip | restart")
     print(f"{GREY}Ctrl+C to stop.{RESET}\n")
+    Thread(target=read_typed_commands, daemon=True).start()
 
     try:
         server.serve_forever()

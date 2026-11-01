@@ -64,6 +64,7 @@ public class VRControlPanel : MonoBehaviour
     public StepBob.Strength stepBob = StepBob.Strength.Subtle;
 
     [Header("Teleport Destinations")]
+    public Transform practiceDestination; // the practice area (PLACEHOLDER), where a session starts
     public Transform plainDestination;
     public Transform mazeDestination;
     public Transform houseDestination;
@@ -92,6 +93,7 @@ public class VRControlPanel : MonoBehaviour
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
     private BodyUnderHead _bodyUnderHead;
+    private StudySession _session; // the session run from the PC's control page
     private StepBob _stepBob;  // in the LLM pipeline
     private ManualLocomotion _manual;      // the Manual condition's sticks; off in ROVR
     private ControllerButton _aButton;     // A: short press = mute / unmute, long press = show / hide the panel
@@ -163,9 +165,10 @@ public class VRControlPanel : MonoBehaviour
         TeleportTo(plainDestination, 0f, "Plain", "at start");
 
         // Hook up button listeners with specific Y rotation constraints
-        if (plainButton != null) plainButton.onClick.AddListener(() => { Record("BUTTON", "Plain"); TeleportTo(plainDestination, 0f, "Plain", "button"); });
-        if (mazeButton != null) mazeButton.onClick.AddListener(() => { Record("BUTTON", "Maze"); TeleportTo(mazeDestination, 90f, "Maze", "button"); });
-        if (houseButton != null) houseButton.onClick.AddListener(() => { Record("BUTTON", "House"); TeleportTo(houseDestination, 0f, "House", "button"); });
+        // Through the session, so a set-up session loads that world's tasks.
+        if (plainButton != null) plainButton.onClick.AddListener(() => { Record("BUTTON", "Plain"); _session.GoTo("Plain"); });
+        if (mazeButton != null) mazeButton.onClick.AddListener(() => { Record("BUTTON", "Maze"); _session.GoTo("Maze"); });
+        if (houseButton != null) houseButton.onClick.AddListener(() => { Record("BUTTON", "House"); _session.GoTo("House"); });
 
         if (tutorialButton != null) tutorialButton.onClick.AddListener(() => { Record("BUTTON", "Tutorial"); ShowTutorial(); });
         ShowSpeed(SpeedLevel.Normal, false);
@@ -223,9 +226,13 @@ public class VRControlPanel : MonoBehaviour
         SetCondition(condition);
         ClearUI();
 
-        // The panel starts hidden (the caption strip shows what's heard); the tutorial card comes first.
+        // The panel starts hidden (the caption strip shows what's heard). On the headset the session then
+        // waits for the control page (a waiting card); otherwise the tutorial card comes first.
         SetPanelShown(false, false);
-        ShowTutorial();
+        _session = GetComponent<StudySession>();
+        if (_session == null) _session = gameObject.AddComponent<StudySession>();
+        _session.Begin(this);
+        if (!_session.WaitsForSetup) ShowTutorial();
     }
 
     private void Update()
@@ -257,23 +264,7 @@ public class VRControlPanel : MonoBehaviour
     {
         if (destination != null)
         {
-            // Stop any movement first, so it doesn't carry on in the new world.
-            _moveTimer = 0f;
-            if (_resolver != null) _resolver.HaltNow();
-
-            // A live CharacterController can snap back to its old position, so pause it while moving.
-            _controller.enabled = false;
-            playerBody.position = destination.position;
-            playerBody.rotation = Quaternion.Euler(0f, targetYRotation, 0f);
-            _controller.enabled = true;
-
-            // The head (not just the body) lands on the destination, facing targetYRotation, wherever the
-            // user stands in their play area. (InputTracking.Recenter did this before OpenXR.)
-            if (_bodyUnderHead != null) _bodyUnderHead.FaceFrom(targetYRotation);
-
-            Debug.Log($"<color=blue><b>[Teleport]</b> Moved player to {destination.name} facing {targetYRotation}° Y</color>");
-            Vector3 p = destination.position;
-            Record("TELEPORT", $"{world} ({reason}): to {destination.name} at ({p.x:0.##}, {p.y:0.##}, {p.z:0.##}), facing {targetYRotation}°");
+            Teleport(destination.position, targetYRotation, world, reason, destination.name);
         }
         else
         {
@@ -281,6 +272,58 @@ public class VRControlPanel : MonoBehaviour
             Record("TELEPORT", $"{world} ({reason}): failed, no destination assigned");
         }
     }
+
+    private void Teleport(Vector3 position, float targetYRotation, string world, string reason, string where)
+    {
+        // Stop any movement first, so it doesn't carry on in the new world.
+        _moveTimer = 0f;
+        if (_resolver != null) _resolver.HaltNow();
+
+        // A live CharacterController can snap back to its old position, so pause it while moving.
+        _controller.enabled = false;
+        playerBody.position = position;
+        playerBody.rotation = Quaternion.Euler(0f, targetYRotation, 0f);
+        _controller.enabled = true;
+
+        // The head (not just the body) lands on the destination, facing targetYRotation, wherever the
+        // user stands in their play area. (InputTracking.Recenter did this before OpenXR.)
+        if (_bodyUnderHead != null) _bodyUnderHead.FaceFrom(targetYRotation);
+
+        Debug.Log($"<color=blue><b>[Teleport]</b> Moved player to {where} facing {targetYRotation:0}° Y</color>");
+        Record("TELEPORT", $"{world} ({reason}): to {where} at ({position.x:0.##}, {position.y:0.##}, {position.z:0.##}), facing {targetYRotation:0}°");
+    }
+
+    // ---------- For the study session (StudySession) ----------
+
+    // Practice, Plain, Maze or House: to that world's start. False if there's no such world here.
+    public bool GoToWorld(string world, string reason)
+    {
+        switch ((world ?? "").ToLowerInvariant())
+        {
+            case "practice": TeleportTo(practiceDestination, 0f, "Practice", reason); return practiceDestination != null;
+            case "plain": TeleportTo(plainDestination, 0f, "Plain", reason); return plainDestination != null;
+            case "maze": TeleportTo(mazeDestination, 90f, "Maze", reason); return mazeDestination != null;
+            case "house": TeleportTo(houseDestination, 0f, "House", reason); return houseDestination != null;
+            default: Record("TELEPORT", "Unknown world '" + world + "'"); return false;
+        }
+    }
+
+    // Back to a spot (a restarted task begins where it began).
+    public void PlaceAt(Vector3 position, float yaw, string world, string reason)
+    {
+        Teleport(position, yaw, world, reason, "the task's start");
+    }
+
+    // A new participant: nothing carries over from the last (their "a bit", step length, speed, the
+    // command to go back from), and the mic starts muted again.
+    public void ResetForParticipant()
+    {
+        if (_resolver != null) _resolver.ResetSession();
+        if (!_isMicMuted) ToggleMicMute();
+    }
+
+    // One transcript line, for the session.
+    public void Log(string kind, string details) => Record(kind, details);
 
     private void ToggleMicMute()
     {
@@ -681,6 +724,7 @@ public class VRControlPanel : MonoBehaviour
     {
         if (CardShown)
         {
+            if (!tutorialCard.Closable) return; // the waiting card stays until the session is set up
             Record("BUTTON", "A: closed the tutorial");
             tutorialCard.Hide();
             return;
@@ -708,7 +752,7 @@ public class VRControlPanel : MonoBehaviour
         if (record) Record("BUTTON", "A held: panel " + (shown ? "shown" : "hidden"));
     }
 
-    private void ShowTutorial()
+    public void ShowTutorial()
     {
         if (tutorialCard == null) return;
         tutorialCard.Show(condition);

@@ -7,7 +7,7 @@ For the whole-project setup, see the [repository README](../README.md).
 ## Install
 
 1. In your Unity project, create `Assets/Editor/`. The name matters: these scripts use `UnityEditor` and only compile from a folder called `Editor`.
-2. Copy all six `.cs` files from this folder into it:
+2. Copy all seven `.cs` files from this folder into it:
 
    | File | Role |
    |---|---|
@@ -15,7 +15,8 @@ For the whole-project setup, see the [repository README](../README.md).
    | `HouseGenerator.cs` | House world |
    | `MazeGenerator.cs` | Maze world |
    | `PlainGenerator.cs` | Plain world |
-   | `WorldBuilder.cs` | Builds all three into one scene |
+   | `PracticeGenerator.cs` | Practice area (a placeholder) |
+   | `WorldBuilder.cs` | Builds all the worlds into one scene |
    | `CollisionCheck.cs` | Verifies the worlds are solid |
 
 3. For the hedge maze, also copy `Assets/Shaders/ROVRWorldSpaceTiled.shader` and the two textures in `Assets/Resources/Props/Maze/`. Without them the maze uses flat colours (a warning appears in the Console).
@@ -26,13 +27,14 @@ For the whole-project setup, see the [repository README](../README.md).
 
 | Item | Does |
 |---|---|
-| Generate All Three Worlds | House at (0,0,0), Plain at (200,0,0), Maze at (0,0,200) |
+| Generate All Worlds | House at (0,0,0), Plain at (200,0,0), Maze at (0,0,200), the practice area at (-200,0,0) |
+| Generate Practice Area | PLACEHOLDER practice area: a 16 x 16 m fenced square with a tree, a rock, a chair and a plant |
 | Generate House / Plain / Maze | One world at the origin |
 | Check Collisions | Tests that nothing can be walked through (see below) |
 
-Re-running a generator **replaces** that world's existing object (`House`, `Plain` or `Maze`) rather than adding a second copy, and Ctrl+Z undoes it. Anything you placed by hand inside that object is deleted with it. Save the scene afterwards.
+Re-running a generator **replaces** that world's existing object (`House`, `Plain`, `Maze` or `Practice`) rather than adding a second copy, and Ctrl+Z undoes it. Anything you placed by hand inside that object is deleted with it. Save the scene afterwards.
 
-**Generate Maze / Plain / House on their own build at the origin.** In `Assets/main.unity` the worlds sit at the offsets above, so use **Generate All Three Worlds**, or move the world back to its offset afterwards.
+**Generate Maze / Plain / House on their own build at the origin.** In `Assets/main.unity` the worlds sit at the offsets above, so use **Generate All Worlds**, or move the world back to its offset afterwards. **Generate Practice Area** builds at its offset (-200,0,0).
 
 Nothing generates when you press Play. The saved scene is a snapshot, so after changing a generator you must regenerate and save before the change appears.
 

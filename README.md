@@ -12,11 +12,14 @@ LLM-driven voice navigation in VR. A thesis prototype comparing joystick movemen
 Voice navigation runs through the LLM in `Assets/main.unity`:
 
 - **Speech:** Whisper transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine. On the headset, speech is transcribed on the PC through the bridge (about 0.4 s a sentence; the Quest itself takes about 15 s). In the Editor, [whisper.unity](https://github.com/Macoron/whisper.unity) can also do it.
-- **Panel:** Vert's VR control panel shows the subtitles. It also has the Plain / Maze / House buttons, a mic mute button, Slow / Normal / Fast speed buttons and a **Bob** button for step commands (subtle / strong / off). **The mic starts muted.**
+- **Panel:** a dark glass panel with the subtitles and reply, the mic icon (a mic, slashed when muted), the Plain / Maze / House buttons and a **?** button that shows the tutorial card again. It starts hidden and follows your gaze lazily. While it's hidden, a caption strip low in the view still shows what was heard and the reply, with the mic icon. **The mic starts muted.**
+- **A button (right controller):** a short press mutes or unmutes the mic, and closes the tutorial card. Holding it for 0.6 s shows or hides the panel. In the Editor, **F1** is the A button.
+- **Two conditions:** **ROVR** (voice only) and **Manual** (controllers only: the left stick moves, faster the further it's pushed, up to 2 m/s; the right stick turns smoothly, with the edges of the view darkened; voice is off). The condition is set from the control page (step 4 below), or with the panel's **Condition** field in the Inspector.
 - **Maze minimap:** in the corner of the view while in the Maze: the whole maze, you, and the exit.
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
-- **Halt words** (`stop`, `wait`, and Filipino `ops`) are fixed keywords. They stop the player before the sentence is finished, without the LLM.
-- **Fallback:** untick **Use LLM** on the panel for the four fixed phrases only (`move forward/backward/left/right`).
+- **Halt words** (`stop`, `wait`, and Filipino `ops`) and **`go back`** are fixed phrases. Halt words stop the player before the sentence is finished, without the LLM.
+- **Fallback:** untick **Use LLM** on the panel's component in the Inspector for the four fixed phrases only (`move forward/backward/left/right`).
+- **Head bob** for step commands: subtle, set with **Step Bob** in the Inspector (subtle / strong / off).
 
 | Part | Where |
 |---|---|
@@ -26,11 +29,13 @@ Voice navigation runs through the LLM in `Assets/main.unity`:
 
 **Done:**
 - the three worlds (solid collision, hedge maze);
-- voice + LLM navigation (tested headless with the real model, and on a Quest 3S with its microphone).
+- voice + LLM navigation (tested headless with the real model, and on a Quest 3S with its microphone);
+- the controller (Manual) condition;
+- running a session from the PC: participant code and condition, the practice area, tasks with timing, and a task CSV.
 
 **Not done:**
-- the joystick comparison arm;
-- task timing and logging;
+- the real tasks and practice area: both are **placeholders** for now (see step 4);
+- doors in the House doorways;
 - questionnaires.
 
 ## Requirements
@@ -47,9 +52,9 @@ If you cloned this repo, the worlds are already in `Assets/main.unity`: open it 
 
 To set the worlds up in a different project:
 
-1. Create `Assets/Editor/` and copy the six `.cs` files from `Unity Environments/` into it.
+1. Create `Assets/Editor/` and copy the seven `.cs` files from `Unity Environments/` into it.
 2. Copy the maze look: `Assets/Shaders/ROVRWorldSpaceTiled.shader` and the two textures in `Assets/Resources/Props/Maze/`. Without them the maze falls back to flat colours.
-3. Open a scene and run **Tools > ROVR > Generate All Three Worlds**. If the scene has a `VRControlPanel`, this also points its Plain / Maze / House teleport destinations at each world's new `Start`.
+3. Open a scene and run **Tools > ROVR > Generate All Worlds**. If the scene has a `VRControlPanel`, this also points its Plain / Maze / House / Practice teleport destinations at each world's new `Start`.
 4. Run **Tools > ROVR > Check Collisions**. It should report `All worlds solid.`
 
 Regenerating deletes and rebuilds each world, so anything you hand-placed inside `House`, `Plain` or `Maze` is lost. Save the scene afterwards.
@@ -61,8 +66,8 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
    ollama pull gemma3n:e4b
    ```
 2. Make sure Ollama is running and give it a moment: the first load after it starts can take about 30 s.
-3. Open `Assets/main.unity` and press Play. The panel adds the LLM pipeline to `PlayerBody` by itself.
-4. Press **Unmute** on the panel and speak. The panel shows what it heard and what it is doing (green = moving, yellow = a question or a problem, red = an error).
+3. Open `Assets/main.unity` and press Play. The panel adds the LLM pipeline to `PlayerBody` by itself. The tutorial card comes up first: press **F1** to close it.
+4. Press **F1** again to unmute, and speak. The caption strip shows what it heard and what it is doing (green = moving, yellow = a question or a problem, red = an error). Hold **F1** to show the panel.
 
 **Sample commands**
 
@@ -89,6 +94,7 @@ Regenerating deletes and rebuilds each world, so anything you hand-placed inside
 | `slowly walk to the tree` | Slow for this command only |
 | `turn around until you see the tree` | Turns in 90° steps until the tree is in view (Plain) |
 | `wait, I mean left` (while moving) | Stops instantly, then moves left |
+| `go back`, `take me back`, `undo that` | Turns around, walks the last command back, then turns to face the way you were facing. After a chain (`move forward 3 meters, then turn right`) it undoes the whole chain in reverse; after a turn alone, it just turns back. Saying it again undoes the undo. `go back 2 meters` and `step back` are ordinary moves |
 | `stop`, or `ops` | Stops immediately |
 
 If it can't do what you asked, it says why on the panel.
@@ -110,6 +116,22 @@ Without step 1 the bridge still works, but the headset transcribes by itself, at
 3. Start ROVR on the headset. It finds the PC by itself. The panel says `Connected to the PC over Wi-Fi`, and the bridge window shows `WI-FI found by <the headset's address>`.
 
 The cable still works with the Wi-Fi bridge, and the app moves between the two on its own. Installing a new build still needs the cable. On battery a Quest 3S lasts about 2 hours.
+
+**4. Running a study session (the control page)**
+
+The operator runs the session from the PC; the participant doesn't touch any settings.
+
+1. Start the bridge (step 3). It prints `Session control: http://127.0.0.1:8765/control`. Open that page in a browser on the PC. Only this PC can open it, not other devices on the network.
+2. Start ROVR on the headset. It shows **Waiting to start**, and the page shows the headset as connected.
+3. On the page, enter the participant code (for example `PP1`), pick the condition and press **Set up**. The headset moves to the practice area, in that condition, and shows its tutorial card. Nothing carries over from the previous participant.
+4. Press **Plain**, **Maze** or **House** to move the participant there. The world's first task is made ready, and the page shows its instruction. Read it out, then press **Start** (or **F5** on the page). The task ends by itself when the participant reaches its goal (a yellow pad), and the next one is made ready. **Skip** moves on to the next task; **Restart** puts the participant back where the task began, with the timer stopped. There are no time limits.
+5. Each task is saved to `Bridge/logs/tasks_<code>_<date-time>.csv`: participant, condition, world, task, instruction, outcome (`done`, `skipped`, `restarted`, or `left` if moved to another world mid-task), seconds, and the start and end times. The `logs` folder isn't in git.
+
+The same commands can be typed in the bridge window: `setup PP1 rovr`, `plain`, `maze`, `house`, `practice`, `start`, `skip`, `restart`.
+
+In the Editor the scene doesn't wait for the page: it plays at once, in the condition set in the Inspector, and **F5 / F6 / F7** start, skip and restart the current task once the page has set up a participant. Tick **Wait In Editor** on the panel's `StudySession` component to make it wait like the headset.
+
+> **Placeholders:** the tasks (`Assets/GUI/StudyTasks.cs`) and the practice area (**Tools > ROVR > Generate Practice Area**) are placeholders, marked `PLACEHOLDER`. Replace them with the real study tasks before user testing.
 
 ## Troubleshooting
 

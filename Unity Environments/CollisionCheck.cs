@@ -1,7 +1,7 @@
 // Assets/Editor/CollisionCheck.cs
 // Menu: Tools > ROVR > Check Collisions
-// Verifies that the generated worlds (House, Plain, Maze) are solid: nobody can walk through a
-// wall, prop, floor or ceiling. Run it after Generate All Three Worlds.
+// Verifies that the generated worlds (House, Plain, Maze, Practice) are solid: nobody can walk through a
+// wall, prop, floor or ceiling. Run it after Generate All Worlds.
 //
 //   1. Coverage: every visible object in a world has an enabled, non-trigger collider
 //      (the flat Start/Goal pads are deliberately non-solid markers and are skipped).
@@ -21,7 +21,7 @@ public static class CollisionCheck
 {
     const float Radius = 0.3f;   // deliberately slimmer than a typical VR rig, so it's the harder case
     const float Height = 1.8f;
-    static readonly string[] WorldNames = { "House", "Plain", "Maze" };
+    static readonly string[] WorldNames = { "House", "Plain", "Maze", "Practice" };
 
     [MenuItem("Tools/ROVR/Check Collisions")]
     static void RunFromMenu()
