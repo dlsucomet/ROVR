@@ -53,6 +53,11 @@ public class VRControlPanel : MonoBehaviour
     public float moveSpeed = 2f;     // fixed-phrase mode only; the LLM pipeline has its own speed
     public float moveDuration = 1f;  // fixed-phrase mode only
 
+    [Header("Study")]
+    [Tooltip("ROVR = voice only; Manual = controller sticks only (voice off, as Manual participants think aloud). " +
+             "The session control page on the PC sets this; without it, this value is used.")]
+    public StudyCondition condition = StudyCondition.ROVR;
+
     [Header("Steps")]
     [Tooltip("The slight up-and-down of walking on step commands (\"take 3 steps\"): Off, Subtle (1.5 cm) or Strong (3 cm). " +
              "The panel's Bob button cycles through them. Other moves never bob.")]
@@ -85,6 +90,9 @@ public class VRControlPanel : MonoBehaviour
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
     private BodyUnderHead _bodyUnderHead;
     private StepBob _stepBob;  // in the LLM pipeline
+    private ManualLocomotion _manual;      // the Manual condition's sticks; off in ROVR
+    private ControllerButton _aButton;     // A: short press = mute / unmute, long press = show / hide the panel
+    private bool _panelShown = true;
     private Text _stepBobText; // the Bob button's label
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
@@ -133,6 +141,17 @@ public class VRControlPanel : MonoBehaviour
 
         // The Maze minimap (corner of the view, only in the Maze), for both voice and fixed-phrase modes.
         if (FindAnyObjectByType<MazeMinimap>() == null) gameObject.AddComponent<MazeMinimap>();
+
+        // The Manual condition's stick movement, on the same body; only on in Manual (SetCondition).
+        _manual = playerBody.GetComponent<ManualLocomotion>();
+        if (_manual == null) _manual = playerBody.gameObject.AddComponent<ManualLocomotion>();
+        _manual.OnLog += line => Record("MANUAL", line);
+
+        // A on the right controller (F1 in the Editor): a short press mutes / unmutes, a long press shows / hides the panel.
+        _aButton = GetComponent<ControllerButton>();
+        if (_aButton == null) _aButton = gameObject.AddComponent<ControllerButton>();
+        _aButton.OnShortPress += OnAShortPress;
+        _aButton.OnLongPress += TogglePanel;
 
         // Keeps the body (and its collisions) under the user's head in the headset, and hides its capsule.
         _bodyUnderHead = playerBody.GetComponent<BodyUnderHead>();
@@ -201,6 +220,7 @@ public class VRControlPanel : MonoBehaviour
         // Without it the mic records silence, so nothing is ever transcribed. Ask once at start.
         RequestMicPermission();
 
+        SetCondition(condition);
         ClearUI();
     }
 
@@ -261,6 +281,7 @@ public class VRControlPanel : MonoBehaviour
     private void ToggleMicMute()
     {
         if (microphoneRecord == null || whisperManager == null) return;
+        if (_isMicMuted && condition == StudyCondition.Manual) return; // no voice commands in Manual
 
         // Unmuting without microphone permission would only record silence: ask again instead.
         if (_isMicMuted && !HasMicPermission())
@@ -391,6 +412,7 @@ public class VRControlPanel : MonoBehaviour
     // Mono microphone audio. Public so a recording can be played in for testing without a microphone.
     public void FeedAudio(float[] samples, int frequency)
     {
+        if (condition == StudyCondition.Manual) return; // Manual participants think aloud: that's not for the system
         if (_segmenter == null || _segmenter.SampleRate != frequency)
         {
             _segmenter = new SpeechSegmenter(frequency);
@@ -649,6 +671,37 @@ public class VRControlPanel : MonoBehaviour
         if (announce) SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
     }
 
+    // ---------- Study condition and the A button ----------
+
+    // ROVR: voice on (the mic still starts muted), sticks off. Manual: sticks on, mic muted and staying muted.
+    public void SetCondition(StudyCondition next)
+    {
+        condition = next;
+        if (_resolver != null) _resolver.HaltNow();
+        if (_manual != null) _manual.enabled = next == StudyCondition.Manual;
+        if (next == StudyCondition.Manual && !_isMicMuted) ToggleMicMute();
+        if (micMuteButton != null) micMuteButton.interactable = next == StudyCondition.ROVR;
+        Record("SESSION", "Condition: " + (next == StudyCondition.ROVR ? "ROVR (voice)" : "Manual (controller)"));
+    }
+
+    private void OnAShortPress()
+    {
+        if (condition != StudyCondition.ROVR) return; // in Manual, A only shows / hides the panel (long press)
+        Record("BUTTON", "A: " + (_isMicMuted ? "unmute" : "mute"));
+        ToggleMicMute();
+    }
+
+    // Shows or hides the whole panel. The canvas stays alive (this script lives on it), it just isn't
+    // drawn or clickable.
+    private void TogglePanel()
+    {
+        _panelShown = !_panelShown;
+        var canvas = GetComponent<Canvas>();
+        if (canvas != null) canvas.enabled = _panelShown;
+        foreach (var raycaster in GetComponents<UnityEngine.EventSystems.BaseRaycaster>()) raycaster.enabled = _panelShown;
+        Record("BUTTON", "A held: panel " + (_panelShown ? "shown" : "hidden"));
+    }
+
     // ---------- Steps ----------
 
     // The Bob button, right of the speed buttons. A copy of the Normal button made at start, so the
@@ -886,6 +939,7 @@ public class VRControlPanel : MonoBehaviour
         _transcript?.End();
         _transcript = null;
         if (_bridge != null) _bridge.OnChanged -= OnBridgeChanged;
+        if (_aButton != null) { _aButton.OnShortPress -= OnAShortPress; _aButton.OnLongPress -= TogglePanel; }
 
         if (_resolver != null)
         {

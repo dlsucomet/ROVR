@@ -23,6 +23,7 @@ namespace ROVR
         // each eye looks from a little to one side, and an exact fit would leave a clear strip.
         const float Oversize = 1.5f;
 
+        ManualLocomotion manual; // the Manual condition's stick turning darkens the edges too
         Camera cam;
         Transform quad;
         Material material;
@@ -32,6 +33,7 @@ namespace ROVR
         void Start()
         {
             if (controller == null) controller = GetComponent<NavigationController>();
+            manual = GetComponent<ManualLocomotion>();
             cam = Camera.main;
             var shader = Resources.Load<Shader>("ROVR/Vignette");
             if (cam == null || shader == null)
@@ -56,7 +58,9 @@ namespace ROVR
 
         void LateUpdate()
         {
-            float target = controller != null && controller.IsTurning ? strength : 0f;
+            if (manual == null) manual = GetComponent<ManualLocomotion>(); // added after this, by the panel
+            bool turning = (controller != null && controller.IsTurning) || (manual != null && manual.enabled && manual.IsTurning);
+            float target = turning ? strength : 0f;
             current = Mathf.MoveTowards(current, target, Time.deltaTime / Mathf.Max(0.01f, fadeSeconds));
             material.SetFloat(StrengthId, current);
 
