@@ -60,7 +60,7 @@ public class VRControlPanel : MonoBehaviour
 
     [Header("Steps")]
     [Tooltip("The slight up-and-down of walking on step commands (\"take 3 steps\"): Off, Subtle (1.5 cm) or Strong (3 cm). " +
-             "The panel's Bob button cycles through them. Other moves never bob.")]
+             "Other moves never bob.")]
     public StepBob.Strength stepBob = StepBob.Strength.Subtle;
 
     [Header("Teleport Destinations")]
@@ -73,9 +73,12 @@ public class VRControlPanel : MonoBehaviour
     public Button mazeButton;
     public Button houseButton;
     public Button micMuteButton;
-    public Button slowButton;   // walking speed (experimenter); also "faster" / "slower" by voice
-    public Button normalButton;
-    public Button fastButton;
+    [Tooltip("The mic icon on the mute button: the mic, or the mic with a red slash when muted (like Discord).")]
+    public Image micIcon;
+    public Sprite micOnSprite;
+    public Sprite micOffSprite;
+    public Button tutorialButton;      // "?": shows the tutorial card again
+    public TutorialCard tutorialCard;  // shown at the start, before practice
     public Text subtitlesText; // Displays whatever speech is registered
     public Text outputText;    // Displays feedback: green = understood, yellow = needs you, red = didn't work
 
@@ -92,8 +95,7 @@ public class VRControlPanel : MonoBehaviour
     private StepBob _stepBob;  // in the LLM pipeline
     private ManualLocomotion _manual;      // the Manual condition's sticks; off in ROVR
     private ControllerButton _aButton;     // A: short press = mute / unmute, long press = show / hide the panel
-    private bool _panelShown = true;
-    private Text _stepBobText; // the Bob button's label
+    private bool _panelShown = true; // hidden at start (Start); A held shows it
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
@@ -165,11 +167,8 @@ public class VRControlPanel : MonoBehaviour
         if (mazeButton != null) mazeButton.onClick.AddListener(() => { Record("BUTTON", "Maze"); TeleportTo(mazeDestination, 90f, "Maze", "button"); });
         if (houseButton != null) houseButton.onClick.AddListener(() => { Record("BUTTON", "House"); TeleportTo(houseDestination, 0f, "House", "button"); });
 
-        if (slowButton != null) slowButton.onClick.AddListener(() => { Record("BUTTON", "Slow"); SetSpeed(SpeedLevel.Slow); });
-        if (normalButton != null) normalButton.onClick.AddListener(() => { Record("BUTTON", "Normal"); SetSpeed(SpeedLevel.Normal); });
-        if (fastButton != null) fastButton.onClick.AddListener(() => { Record("BUTTON", "Fast"); SetSpeed(SpeedLevel.Fast); });
+        if (tutorialButton != null) tutorialButton.onClick.AddListener(() => { Record("BUTTON", "Tutorial"); ShowTutorial(); });
         ShowSpeed(SpeedLevel.Normal, false);
-        MakeStepBobButton();
 
         // Questions can be longer than a line ("Which plant? Look at it..."): wrap, and shrink to fit the box.
         if (outputText != null)
@@ -186,6 +185,7 @@ public class VRControlPanel : MonoBehaviour
             if (micButtonText != null) micButtonText.text = "Unmute"; // Default text requirement
             micMuteButton.onClick.AddListener(ToggleMicMute);
         }
+        ShowMic();
 
         // Initialize speech input (the Whisper model loads by itself in the background)
         if (whisperManager != null && microphoneRecord != null)
@@ -222,6 +222,10 @@ public class VRControlPanel : MonoBehaviour
 
         SetCondition(condition);
         ClearUI();
+
+        // The panel starts hidden (the caption strip shows what's heard); the tutorial card comes first.
+        SetPanelShown(false, false);
+        ShowTutorial();
     }
 
     private void Update()
@@ -309,6 +313,7 @@ public class VRControlPanel : MonoBehaviour
             microphoneRecord.enabled = false;
 
             if (micButtonText != null) micButtonText.text = "Unmute";
+            ShowMic();
             Debug.Log("<color=yellow><b>[Mic Muted]</b> Speech recognition paused.</color>");
             ClearUI();
         }
@@ -320,6 +325,7 @@ public class VRControlPanel : MonoBehaviour
             microphoneRecord.StartRecord();
 
             if (micButtonText != null) micButtonText.text = "Mute";
+            ShowMic();
             string devices = Microphone.devices.Length == 0 ? "none found" : string.Join(", ", Microphone.devices);
             string stt = _pcSpeech != null && _pcSpeech.Ready ? "on the PC" : LocalWhisper;
             Debug.Log("<color=green><b>[Mic Unmuted]</b> Listening continuously...</color> Microphones: " + devices
@@ -651,23 +657,10 @@ public class VRControlPanel : MonoBehaviour
 
     private static readonly float[] FixedPhraseSpeeds = { 1f, 2f, 3f }; // m/s for Slow / Normal / Fast without the LLM
 
-    private void SetSpeed(SpeedLevel level)
-    {
-        if (_resolver != null) _resolver.SetSpeed(level); // calls back ShowSpeed
-        else ShowSpeed(level, true);
-    }
-
-    // Highlights the speed in use, and says so.
+    // The speed in use ("faster" / "slower" by voice), and says so.
     private void ShowSpeed(SpeedLevel level, bool announce)
     {
         moveSpeed = FixedPhraseSpeeds[(int)level];
-        var buttons = new[] { slowButton, normalButton, fastButton };
-        for (int i = 0; i < buttons.Length; i++)
-        {
-            if (buttons[i] == null) continue;
-            var image = buttons[i].GetComponent<Image>();
-            if (image != null) image.color = i == (int)level ? new Color(0.55f, 0.9f, 0.55f) : Color.white;
-        }
         if (announce) SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
     }
 
@@ -686,60 +679,48 @@ public class VRControlPanel : MonoBehaviour
 
     private void OnAShortPress()
     {
+        if (CardShown)
+        {
+            Record("BUTTON", "A: closed the tutorial");
+            tutorialCard.Hide();
+            return;
+        }
         if (condition != StudyCondition.ROVR) return; // in Manual, A only shows / hides the panel (long press)
         Record("BUTTON", "A: " + (_isMicMuted ? "unmute" : "mute"));
         ToggleMicMute();
     }
 
+    public bool PanelShown => _panelShown;
+    public bool CardShown => tutorialCard != null && tutorialCard.Shown;
+
+    private void TogglePanel() => SetPanelShown(!_panelShown, true);
+
     // Shows or hides the whole panel. The canvas stays alive (this script lives on it), it just isn't
-    // drawn or clickable.
-    private void TogglePanel()
+    // drawn or clickable. Shown, it comes up straight in front of the user, then follows lazily.
+    private void SetPanelShown(bool shown, bool record)
     {
-        _panelShown = !_panelShown;
+        _panelShown = shown;
         var canvas = GetComponent<Canvas>();
-        if (canvas != null) canvas.enabled = _panelShown;
-        foreach (var raycaster in GetComponents<UnityEngine.EventSystems.BaseRaycaster>()) raycaster.enabled = _panelShown;
-        Record("BUTTON", "A held: panel " + (_panelShown ? "shown" : "hidden"));
+        if (canvas != null) canvas.enabled = shown;
+        foreach (var raycaster in GetComponents<UnityEngine.EventSystems.BaseRaycaster>()) raycaster.enabled = shown;
+        var follow = GetComponent<LazyFollow>();
+        if (shown && follow != null) follow.SnapNow();
+        if (record) Record("BUTTON", "A held: panel " + (shown ? "shown" : "hidden"));
     }
 
-    // ---------- Steps ----------
-
-    // The Bob button, right of the speed buttons. A copy of the Normal button made at start, so the
-    // scene file doesn't change. Each press: subtle -> strong -> off -> subtle.
-    private void MakeStepBobButton()
+    private void ShowTutorial()
     {
-        if (normalButton == null) return;
-        var button = Instantiate(normalButton, normalButton.transform.parent);
-        button.name = "StepBobButton";
-        button.onClick = new Button.ButtonClickedEvent(); // none of the Normal button's
-        var rect = (RectTransform)button.transform;
-        var normal = (RectTransform)normalButton.transform;
-        rect.anchoredPosition = normal.anchoredPosition + new Vector2(215f, 0f);
-        rect.sizeDelta = new Vector2(110f, normal.sizeDelta.y);
-        var image = button.GetComponent<Image>();
-        if (image != null) image.color = Color.white;
-
-        _stepBobText = button.GetComponentInChildren<Text>();
-        if (_stepBobText != null)
-        {
-            _stepBobText.resizeTextForBestFit = true;
-            _stepBobText.resizeTextMinSize = Mathf.Max(8, _stepBobText.fontSize / 2);
-            _stepBobText.resizeTextMaxSize = _stepBobText.fontSize;
-        }
-
-        button.onClick.AddListener(() =>
-        {
-            stepBob = stepBob == StepBob.Strength.Subtle ? StepBob.Strength.Strong
-                : stepBob == StepBob.Strength.Strong ? StepBob.Strength.Off : StepBob.Strength.Subtle;
-            Record("BUTTON", "Bob: " + stepBob.ToString().ToLower());
-            ShowStepBob();
-        });
-        ShowStepBob();
+        if (tutorialCard == null) return;
+        tutorialCard.Show(condition);
+        Record("PANEL", "Tutorial card: " + condition);
     }
 
-    private void ShowStepBob()
+    // The mic icon: the mic, or the mic with a red slash when muted.
+    private void ShowMic()
     {
-        if (_stepBobText != null) _stepBobText.text = "Bob: " + stepBob.ToString().ToLower();
+        if (micIcon == null) return;
+        var sprite = _isMicMuted ? micOffSprite : micOnSprite;
+        if (sprite != null) micIcon.sprite = sprite;
     }
 
     private void HaltFromVoice()
