@@ -65,11 +65,16 @@ public class StudyWorldLog
     public int Run { get; }
     public int Rows { get; private set; }
     public bool ClockStarted { get; private set; }
-    public float Seconds => ClockStarted ? Time.realtimeSinceStartup - _startedAt : 0f;
+    // Rows written in the frame the clock starts in (the first action, and the objective it opens) are all at
+    // t = 0: the milliseconds it takes to write them aren't the participant's.
+    public float Seconds => !ClockStarted || InStartFrame ? 0f : Time.realtimeSinceStartup - _startedAt;
 
     private readonly string _prefix; // the first seven columns, the same on every row
     private StreamWriter _writer;
     private float _startedAt;
+    private DateTime _startedClock;
+    private int _startFrame = -1;
+    private bool InStartFrame => Time.frameCount == _startFrame;
 
     private StudyWorldLog(string id, StudyCondition condition, int sequence, string world, int position)
     {
@@ -93,6 +98,8 @@ public class StudyWorldLog
         if (ClockStarted) return;
         ClockStarted = true;
         _startedAt = Time.realtimeSinceStartup;
+        _startedClock = DateTime.Now;
+        _startFrame = Time.frameCount;
         Open();
     }
 
@@ -101,7 +108,7 @@ public class StudyWorldLog
         if (_writer == null) return;
         var line = new StringBuilder(_prefix, 160);
         line.Append(',').Append(Seconds.ToString("F3", CultureInfo.InvariantCulture));
-        line.Append(',').Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture));
+        line.Append(',').Append((InStartFrame ? _startedClock : DateTime.Now).ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture));
         line.Append(',').Append(Csv(evt));
         line.Append(',').Append(objective > 0 ? objective.ToString(CultureInfo.InvariantCulture) : "");
         line.Append(',').Append(Csv(input));
