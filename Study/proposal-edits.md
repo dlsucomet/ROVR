@@ -8,6 +8,46 @@ The decisions behind them: world order Plain → Maze → House; SSQ before the 
 
 **Tense:** Chapter 7 is written in the past tense ("The study employed…", "Participants were randomly…"), while §4.4 uses the future. The replacement text below uses the future, as a proposal should. Change the rest of Chapter 7 to match.
 
+**Updated 9 November 2026, at the thesis adviser's request:** the worlds are no longer in one fixed order. Each participant gets one of six sequences, and each world run is logged as its own CSV. Edits N1–N10 below cover this, and **they replace the world-order part of edits 1, 7, 9, 12, 32, 37 and 40** (the fixed "plain, maze, house" order). They also replace the pilot codes PP1–PP4 with IDs p901–p904.
+
+---
+
+## November update: world sequences, participant IDs and world logs
+
+N1. **§1.3 Scope** (p. 4). Now: *"three virtual environments of increasing complexity: an open plain, a house, and a maze."*
+   → "three virtual environments of differing complexity: an open plain, a maze, and a house, presented in a counterbalanced order."
+
+N2. **§3.5 Environmental Complexity Framework** (p. 28). After *"…ROVR's LLM-enabled voice interaction will be directly compared against traditional controller modalities."*, add:
+   → "The three worlds differ in complexity but are not presented in a fixed order: each participant receives one of the six possible orders, so that learning and fatigue are spread evenly across the worlds rather than accumulating in the last one."
+
+N3. **§4.4 Experimental Design** (p. 32). Now: *"(an open plain, a house, and a maze)"*
+   → "(an open plain, a maze, and a house, in a counterbalanced order)". After the sentence on random assignment (edit 10), add: "Each participant's ID determines both their condition and the order of the three worlds, from a fixed assignment table balanced so that each condition has 15 participants and each of the six orders is used five times."
+
+N4. **§6.5 Interaction Walkthrough** (p. 62). Now: *"three environments of increasing structural complexity: an open plain, a house, and a maze (Section 4.4)"*
+   → "three environments of differing structural complexity: an open plain, a maze, and a house, in a counterbalanced order (Section 4.4)".
+
+N5. **§7.1.2 Experimental Design and Tasks** (p. 64). Now: *"…across three progressively complex virtual environments, reflecting our established environmental complexity gradient:"*
+   → "…across three virtual environments of differing complexity, reflecting our environmental complexity framework (Section 3.5). To keep learning and fatigue from accumulating in one world, the order of the worlds is counterbalanced across six sequences: plain–maze–house, plain–house–maze, maze–plain–house, maze–house–plain, house–maze–plain and house–plain–maze. At the start, participants type their participant ID into a menu in the headset, which assigns their condition and sequence from a fixed, balanced table:"
+   Then add, after the three world descriptions:
+   → "Within each world, the objectives are shown one after another at the top of the participant's view, and the next appears as soon as the current one is reached. Between worlds, participants remove the headset to complete the questionnaires, and a researcher loads the next world when they are ready."
+
+N6. **§7.1.3 Evaluation Metrics and Instruments** (p. 65). Replace the Task Completion Time bullet (including edit 27) with:
+   → "**Operational Efficiency (Task Completion Time) and interaction logs:** For each world, the system records a time-stamped log, saved as one CSV file per participant, condition and world (for example `p007-rovr-house.csv`). The world's clock starts at the participant's first action there: their first thumbstick push in the controller condition, or the start of their first utterance in the ROVR condition. Task Completion Time for each objective and for the whole world is taken from this clock. Every row also records the participant's ID, condition, sequence, the world's position in the sequence, their position and heading. In the ROVR condition, the log holds each utterance as transcribed, the command the system derived from it, clarification questions and the outcome of each movement; in the controller condition, each change of the left thumbstick's direction (one of eight directions) and how far it was pushed, and each turn of the right thumbstick."
+
+N7. **§7.1.5 Data Analysis Plan** (p. 66). After the first paragraph, add:
+   → "Because the order of the worlds is counterbalanced, world position (first, second or third) will be checked for order effects on Task Completion Time and the questionnaire scores. With 2–3 participants per condition and sequence, this check is descriptive rather than a full factorial test. The per-world logs also give the timelines used for the behavioural analysis below: command repetition and rephrasing, backtracking (from the logged positions), hesitation pauses and error recovery."
+
+N8. **§7.1.6 Pilot Study** (edit 30). Add at the end:
+   → "Pilot participants use the IDs p901–p904, which are outside the assignment table: the researcher chooses their condition and sequence for each day."
+
+N9. **A.1 Ethics Review Form** (p. 70). Now: *"(an open plain, a house, and a maze)"* → "(an open plain, a maze, and a house, in one of six counterbalanced orders)". In the data-collection paragraph (edit 31), after "Task Completion Time (TCT)…", add: "Each world's time-stamped interaction log is saved as a CSV file named with the participant's code, never their name."
+
+N10. **A.3.1 User Study Protocol and A.4 Informed Consent Form.**
+   - A.3.1, 2.3 (p. 89): *"presented in order of increasing environmental complexity:"* → "presented in one of six orders, which your participant ID determines:". Keep the three world bullets.
+   - A.3.1, 1.2 (p. 88): add "You will type your participant ID into a menu in the headset."
+   - A.4, A (p. 102): *"(an open plain, a house, and a maze)"* → "(an open plain, a maze, and a house)".
+   - A.4, E (p. 103), in edit 43's list: "the task times and interaction logs recorded by the system" → "the task times and time-stamped interaction logs recorded by the system for each world".
+
 ---
 
 ## Main text

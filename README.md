@@ -14,7 +14,8 @@ Voice navigation runs through the LLM in `Assets/main.unity`:
 - **Speech:** Whisper transcribes English speech. A sentence ends after **1.5 s of silence**, so pausing mid-sentence is fine. On the headset, speech is transcribed on the PC through the bridge (about 0.4 s a sentence; the Quest itself takes about 15 s). In the Editor, [whisper.unity](https://github.com/Macoron/whisper.unity) can also do it.
 - **Panel:** a dark glass panel with the subtitles and reply, the mic icon (a mic, slashed when muted), the Plain / Maze / House buttons and a **?** button that shows the tutorial card again. It starts hidden and follows your gaze lazily. While it's hidden, a caption strip low in the view still shows what was heard and the reply, with the mic icon. **The mic starts muted.**
 - **A button (right controller):** a short press mutes or unmutes the mic, and closes the tutorial card. Holding it for 0.6 s shows or hides the panel. In the Editor, **F1** is the A button.
-- **Two conditions:** **ROVR** (voice only) and **Manual** (controllers only: the left stick moves, faster the further it's pushed, up to 2 m/s; the right stick turns smoothly, with the edges of the view darkened; voice is off). The condition is set from the control page (step 4 below), or with the panel's **Condition** field in the Inspector.
+- **Two conditions:** **ROVR** (voice only) and **Manual** ("traditional", `trad` in the logs: controllers only. The left stick moves, faster the further it's pushed, up to 2 m/s; the right stick turns smoothly, with the edges of the view darkened; voice is off). In a study session the participant's ID sets it (step 4 below); otherwise the panel's **Condition** field in the Inspector.
+- **Study sessions:** the headset opens on an ID menu. The participant's ID (p001–p030) gives their condition and one of six orders of the three worlds, from a fixed balanced table (`Assets/GUI/StudyAssignments.cs`, copy in `Study/assignment-table.csv`). In each world the objectives appear one after another at the top of the view; the clock starts at the participant's first action there. Each world run is saved as its own time-stamped CSV, for example `p007-rovr-house.csv`.
 - **Maze minimap:** in the corner of the view while in the Maze: the whole maze, you, and the exit.
 - **Commands:** each sentence goes to the local LLM, which moves the player. A command takes about 0.5 s.
 - **Halt words** (`stop`, `wait`, and Filipino `ops`) and **`go back`** are fixed phrases. Halt words stop the player before the sentence is finished, without the LLM.
@@ -31,11 +32,11 @@ Voice navigation runs through the LLM in `Assets/main.unity`:
 - the three worlds (solid collision, hedge maze, doors in the House);
 - voice + LLM navigation (tested headless with the real model, and on a Quest 3S with its microphone);
 - the controller (Manual) condition;
-- running a session from the PC: participant code and condition, the practice area, tasks with timing, and a task CSV.
+- study sessions: the ID menu, the six world sequences, objectives back to back, a CSV per world run, and the control page on the PC. Compiled and the logic tested outside Unity; the flow check in Unity (**Tools > ROVR > Check Study Flow**) still has to be run, and it hasn't been tried on the headset.
 
 **Not done:**
-- the real tasks and practice area: both are **placeholders** for now (see step 4);
-- questionnaires.
+- the real objectives and practice area: both are **placeholders** for now (see step 4);
+- the questionnaires as online forms (drafts in `Study/instruments/`).
 
 ## Requirements
 
@@ -116,21 +117,39 @@ Without step 1 the bridge still works, but the headset transcribes by itself, at
 
 The cable still works with the Wi-Fi bridge, and the app moves between the two on its own. Installing a new build still needs the cable. On battery a Quest 3S lasts about 2 hours.
 
-**4. Running a study session (the control page)**
+**4. Running a study session (the ID menu and the control page)**
 
-The operator runs the session from the PC; the participant doesn't touch any settings.
+The participant types their ID in the headset; the researchers follow the session on the PC. The full procedure, with what to say, is in [`Study/protocol/01-run-sheet.md`](Study/protocol/01-run-sheet.md).
 
 1. Start the bridge (step 3). It prints `Session control: http://127.0.0.1:8765/control`. Open that page in a browser on the PC. Only this PC can open it, not other devices on the network.
-2. Start ROVR on the headset. It shows **Waiting to start**, and the page shows the headset as connected.
-3. On the page, enter the participant code (for example `PP1`), pick the condition and press **Set up**. The headset moves to the practice area, in that condition, and shows its tutorial card. Nothing carries over from the previous participant.
-4. Press **Plain**, **Maze** or **House** to move the participant there. The world's first task is made ready, and the page shows its instruction. Read it out, then press **Start** (or **F5** on the page). The task ends by itself when the participant reaches its goal (a yellow pad), and the next one is made ready. **Skip** moves on to the next task; **Restart** puts the participant back where the task began, with the timer stopped. There are no time limits.
-5. Each task is saved to `Bridge/logs/tasks_<code>_<date-time>.csv`: participant, condition, world, task, instruction, outcome (`done`, `skipped`, `restarted`, or `left` if moved to another world mid-task), seconds, and the start and end times. The `logs` folder isn't in git.
+2. Start ROVR on the headset. It shows the **ID menu**, and the page shows the headset as connected.
+3. The participant types their ID on the number pad with the controller's pointer (p007 = 0, 0, 7, then OK and Yes). Their ID gives their condition and the order of the three worlds:
 
-The same commands can be typed in the bridge window: `setup PP1 rovr`, `plain`, `maze`, `house`, `practice`, `start`, `skip`, `restart`.
+   | Sequence | Order |
+   |---|---|
+   | seq1 | plains → maze → house |
+   | seq2 | plains → house → maze |
+   | seq3 | maze → plains → house |
+   | seq4 | maze → house → plains |
+   | seq5 | house → maze → plains |
+   | seq6 | house → plains → maze |
 
-In the Editor the scene doesn't wait for the page: it plays at once, in the condition set in the Inspector, and **F5 / F6 / F7** start, skip and restart the current task once the page has set up a participant. Tick **Wait In Editor** on the panel's `StudySession` component to make it wait like the headset.
+   IDs p001–p030 are in a fixed table: 15 per condition, each sequence 5 times, balanced in blocks of 12 (`Assets/GUI/StudyAssignments.cs`; `Study/assignment-table.csv` is the same table). Pilot IDs **p901–p904** aren't: the page then shows a pilot box to pick the condition and sequence, so one pilot participant can try both conditions on two days. Any other ID gets "ID not found". The headset moves them to the practice area, in their condition, with its tutorial card. Nothing carries over from the previous participant.
+4. Press **Next** (or **F5** on the page) to load the first world in their sequence. Its objectives appear at the top of the participant's view, one after another: when one is reached (a yellow pad, a room, the maze exit) the next appears straight away. **The world's clock starts at the participant's first action there**: their first stick push (Manual), or when they start speaking (ROVR; pressing A to unmute doesn't count). Nothing before that is logged. **Skip objective** moves on; **Restart world** starts the world again as a new run. There are no time limits.
+5. After the last objective the world's CSV is saved and sent to the PC, and the headset asks the participant to take it off for the questionnaires (movement and the mic are off meanwhile). Press **Next** when they're back for the next world. After the third world the headset says **All done**. **Reset** goes back to the ID menu for the next participant.
+6. **The world logs:** one CSV per world run, named `<id>-<rovr|trad>-<plains|maze|house>.csv`, with `-run2`, `-run3` for repeats, so nothing is overwritten. They're saved on the headset (`Android/data/com.hxil.ROVR/files/StudyData/`, or `StudyData/` in the project in the Editor) and in `Bridge/logs/study/` on the PC. The headset sends each one when its world ends and keeps trying until the bridge confirms it, including after a restart of the app. Columns:
 
-> **Placeholders:** the tasks (`Assets/GUI/StudyTasks.cs`) and the practice area (**Tools > ROVR > Generate Practice Area**) are placeholders, marked `PLACEHOLDER`. Replace them with the real study tasks before user testing.
+   `participant_id, condition, sequence_id, sequence, world, world_position, run, t_s, clock_time, event, objective, input, system, result, push, x_m, z_m, heading_deg`
+
+   `t_s` is seconds since the first action. Events: `objective_start` / `objective_done` / `objective_skipped`; `position` (once a second); `world_end` (`completed`, or `incomplete:` and why). ROVR: `speech_start`, `heard` (input = the words), `command` (system = what it will do), `question`, `notice`, `error`, `halt`, `speed`, `move_end` (result = completed / halted / blocked / not found), `mic`. Manual: `move` (input = forward, forward-right, right, back-right, back, back-left, left, forward-left or stopped; push = how far the stick is pushed, 0–1) and `turn` (left / right / stopped). `x_m` / `z_m` are metres from the world's start point; `heading_deg` is 0 for north, 90 for east.
+
+The same commands can be typed in the bridge window: `id p007`, `assign rovr 3` or `assign trad 3` (pilot IDs), `next`, `skip`, `restart`, `reset`.
+
+In the Editor the scene doesn't show the ID menu: it plays at once, in the condition set in the Inspector, and the world buttons work. Set a participant with `id p007` on the page or in the bridge window; **F5 / F6 / F7** are Next, Skip and Restart. Tick **Wait In Editor** on the panel's `StudySession` component to start with the ID menu, as on the headset (number keys and Enter type into it).
+
+**Checking the session flow:** **Tools > ROVR > Check Study Flow** plays `main.unity` and walks a traditional participant through all three worlds (with a restart and skipped objectives), a pilot, an unknown ID and a ROVR world, checking every CSV. Test files go to `Temp/StudyFlowCheck/`, never to the real data folders.
+
+> **Placeholders:** the objectives (`Assets/GUI/StudyTasks.cs`) and the practice area (**Tools > ROVR > Generate Practice Area**) are placeholders, marked `PLACEHOLDER`. Replace them with the real study objectives before user testing.
 
 ## Troubleshooting
 

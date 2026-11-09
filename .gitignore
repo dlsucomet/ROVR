@@ -67,5 +67,8 @@ crashlytics-build.properties
 # Bridge session logs (participants' speech)
 /Bridge/logs/
 
+# Study world logs written in the Editor (participant data)
+/StudyData/
+
 # whisper.cpp's server program for the bridge (downloaded by each of us, see Bridge/rovr_bridge.py)
 /Bridge/whisper/

@@ -65,6 +65,14 @@ public class TutorialCard : MonoBehaviour
         if (follow != null) follow.SnapNow();
     }
 
+    // Closes it even when the participant can't (the session's "World complete" card, when the researcher
+    // moves on).
+    public void Dismiss()
+    {
+        Closable = true;
+        Hide();
+    }
+
     public void Hide()
     {
         if (canvas == null || !canvas.enabled || !Closable) return;

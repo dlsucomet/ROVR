@@ -111,6 +111,7 @@ public class VRControlPanel : MonoBehaviour
 
     // LLM pipeline (Assets/ROVR), on Player Body
     private SemanticIntentResolver _resolver;
+    private NavigationController _navigation;
     private FOVMetadataGrounding _grounding;
     private OllamaClient _ollama;
     private VoiceCommandRouter _router;
@@ -150,6 +151,7 @@ public class VRControlPanel : MonoBehaviour
         _manual = playerBody.GetComponent<ManualLocomotion>();
         if (_manual == null) _manual = playerBody.gameObject.AddComponent<ManualLocomotion>();
         _manual.OnLog += line => Record("MANUAL", line);
+        _manual.OnInput += (kind, direction, push) => _session?.Stick(kind, direction, push); // the study's world log
 
         // A on the right controller (F1 in the Editor): a short press mutes / unmutes, a long press shows / hides the panel.
         _aButton = GetComponent<ControllerButton>();
@@ -164,11 +166,11 @@ public class VRControlPanel : MonoBehaviour
         // Force initial spawn rotation to plain destination facing 0 degrees Y
         TeleportTo(plainDestination, 0f, "Plain", "at start");
 
-        // Hook up button listeners with specific Y rotation constraints
-        // Through the session, so a set-up session loads that world's tasks.
-        if (plainButton != null) plainButton.onClick.AddListener(() => { Record("BUTTON", "Plain"); _session.GoTo("Plain"); });
-        if (mazeButton != null) mazeButton.onClick.AddListener(() => { Record("BUTTON", "Maze"); _session.GoTo("Maze"); });
-        if (houseButton != null) houseButton.onClick.AddListener(() => { Record("BUTTON", "House"); _session.GoTo("House"); });
+        // The world buttons, for trying the worlds out. During a study session the worlds follow the
+        // participant's sequence instead (the control page's Next), so the buttons do nothing then.
+        if (plainButton != null) plainButton.onClick.AddListener(() => WorldButton("Plain"));
+        if (mazeButton != null) mazeButton.onClick.AddListener(() => WorldButton("Maze"));
+        if (houseButton != null) houseButton.onClick.AddListener(() => WorldButton("House"));
 
         if (tutorialButton != null) tutorialButton.onClick.AddListener(() => { Record("BUTTON", "Tutorial"); ShowTutorial(); });
         ShowSpeed(SpeedLevel.Normal, false);
@@ -293,7 +295,41 @@ public class VRControlPanel : MonoBehaviour
         Record("TELEPORT", $"{world} ({reason}): to {where} at ({position.x:0.##}, {position.y:0.##}, {position.z:0.##}), facing {targetYRotation:0}°");
     }
 
+    private void WorldButton(string world)
+    {
+        if (_session != null && _session.InStudy)
+        {
+            Record("BUTTON", world + " (ignored: in a study session the worlds follow the participant's sequence)");
+            return;
+        }
+        Record("BUTTON", world);
+        GoToWorld(world, "button");
+    }
+
     // ---------- For the study session (StudySession) ----------
+
+    // A world's start point (for the world log's positions), or null.
+    public Transform StartOf(string world)
+    {
+        switch ((world ?? "").ToLowerInvariant())
+        {
+            case "practice": return practiceDestination;
+            case "plain": return plainDestination;
+            case "maze": return mazeDestination;
+            case "house": return houseDestination;
+            default: return null;
+        }
+    }
+
+    // Between worlds (the questionnaires) and at the end: nothing moves the player. Movement stops, the
+    // sticks are off and the mic is muted; SetCondition turns the sticks back on for the next world.
+    public void PauseForBreak()
+    {
+        if (_resolver != null) _resolver.HaltNow();
+        _moveTimer = 0f;
+        if (_manual != null) _manual.enabled = false;
+        if (!_isMicMuted) ToggleMicMute();
+    }
 
     // Practice, Plain, Maze or House: to that world's start. False if there's no such world here.
     public bool GoToWorld(string world, string reason)
@@ -467,11 +503,7 @@ public class VRControlPanel : MonoBehaviour
             _segmenter = new SpeechSegmenter(frequency);
             _segmenter.OnPartial += audio =>
             {
-                if (!_speechStarted)
-                {
-                    _speechStarted = true;
-                    Record("SPEECH", "Started" + (_transcribing ? " (Whisper is still busy with earlier audio)" : ""));
-                }
+                if (!_speechStarted) NoteSpeechStarted();
                 QueueTranscription(audio, false);
             };
             _segmenter.OnSentence += audio =>
@@ -483,6 +515,14 @@ public class VRControlPanel : MonoBehaviour
         }
         _segmenter.DeadAirSec = deadAirSec;
         _segmenter.AddSamples(samples);
+    }
+
+    // The participant started speaking: in the study, their first time in a world starts its clock.
+    private void NoteSpeechStarted()
+    {
+        _speechStarted = true;
+        Record("SPEECH", "Started" + (_transcribing ? " (Whisper is still busy with earlier audio)" : ""));
+        _session?.Note("speech_start", "", "", "", -1f, true);
     }
 
     // Every finished sentence is transcribed, in the order spoken. Of the sentence-so-far pieces only the
@@ -631,6 +671,7 @@ public class VRControlPanel : MonoBehaviour
         Record("HEARD", (spokenText != null
             ? "\"" + spokenText.ToLower() + "\"  (Whisper: \"" + (text ?? "").Trim() + "\")"
             : "ignored as noise  (Whisper: \"" + (text ?? "").Trim() + "\")") + timing);
+        _session?.Note("heard", spokenText != null ? spokenText.ToLower() : (text ?? "").Trim(), "", spokenText != null ? "" : "ignored as noise");
         if (spokenText != null)
         {
             spokenText = spokenText.ToLower();
@@ -679,6 +720,9 @@ public class VRControlPanel : MonoBehaviour
         _resolver.OnStatus += HandleNotice;
         _resolver.OnError += HandleError;
         _resolver.OnSpeedChanged += level => ShowSpeed(level, true);
+        // How each command's movement ended, for the study's world log.
+        _navigation = GetOrAdd<NavigationController>();
+        _navigation.OnCommandFinished += HandleCommandFinished;
 
         _router = NewRouter();
     }
@@ -704,7 +748,9 @@ public class VRControlPanel : MonoBehaviour
     private void ShowSpeed(SpeedLevel level, bool announce)
     {
         moveSpeed = FixedPhraseSpeeds[(int)level];
-        if (announce) SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
+        if (!announce) return;
+        SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
+        _session?.Note("speed", "", level.ToString().ToLower(), "");
     }
 
     // ---------- Study condition and the A button ----------
@@ -732,6 +778,7 @@ public class VRControlPanel : MonoBehaviour
         if (condition != StudyCondition.ROVR) return; // in Manual, A only shows / hides the panel (long press)
         Record("BUTTON", "A: " + (_isMicMuted ? "unmute" : "mute"));
         ToggleMicMute();
+        _session?.Note("mic", _isMicMuted ? "off" : "on", "", "");
     }
 
     public bool PanelShown => _panelShown;
@@ -770,6 +817,7 @@ public class VRControlPanel : MonoBehaviour
     private void HaltFromVoice()
     {
         Record("HALT", "Halt word heard while speaking");
+        _session?.Note("halt", "", "halt word while speaking", "stopped");
         _resolver.HaltNow();
         SetOutputFeedback("Stopped", true);
     }
@@ -788,7 +836,9 @@ public class VRControlPanel : MonoBehaviour
     private void HandleCommandResolved(NavigationCommand command)
     {
         if (command.IsClarification) return;
-        SetOutputFeedback(Describe(command), true);
+        string description = Describe(command);
+        SetOutputFeedback(description, true);
+        _session?.Note("command", "", description, "");
 
         // Steps are the user's own (learned) length: the transcript says how far that was.
         foreach (var step in command.steps)
@@ -801,17 +851,27 @@ public class VRControlPanel : MonoBehaviour
     private void HandleQuestion(string question)
     {
         SetOutputFeedback(question, Color.yellow);
+        _session?.Note("question", "", question, "");
     }
 
     private void HandleNotice(string notice)
     {
         SetOutputFeedback(notice, Color.yellow);
+        _session?.Note("notice", "", notice, "");
+    }
+
+    // How a command's movement ended: completed, halted, blocked or not found.
+    private void HandleCommandFinished(NavigationCommand command, CommandOutcome outcome)
+    {
+        string result = outcome == CommandOutcome.NotFound ? "not found" : outcome.ToString().ToLowerInvariant();
+        _session?.Note("move_end", "", command != null ? Describe(command) : "", result);
     }
 
     private void HandleError(string error)
     {
         Debug.LogWarning("[LLM] " + error);
         Record("ERROR", "LLM: " + error);
+        _session?.Note("error", "", error, "");
         // A model that was just started can take over 30 s to answer the first time, so a timeout isn't "not running".
         string message = error.Contains("Request timeout") ? "The language model is taking too long (still loading?). Please say that again."
             : error.StartsWith("Ollama request failed") && !Application.isEditor && _bridge != null && _bridge.Url == null
@@ -974,5 +1034,6 @@ public class VRControlPanel : MonoBehaviour
             _resolver.OnStatus -= HandleNotice;
             _resolver.OnError -= HandleError;
         }
+        if (_navigation != null) _navigation.OnCommandFinished -= HandleCommandFinished;
     }
 }

@@ -1,0 +1,35 @@
+participant_id,condition,sequence_id,sequence
+p001,rovr,seq1,plains-maze-house
+p002,trad,seq1,plains-maze-house
+p003,rovr,seq3,maze-plains-house
+p004,rovr,seq4,maze-house-plains
+p005,trad,seq5,house-maze-plains
+p006,rovr,seq5,house-maze-plains
+p007,trad,seq2,plains-house-maze
+p008,trad,seq6,house-plains-maze
+p009,trad,seq4,maze-house-plains
+p010,trad,seq3,maze-plains-house
+p011,rovr,seq6,house-plains-maze
+p012,rovr,seq2,plains-house-maze
+p013,rovr,seq6,house-plains-maze
+p014,trad,seq5,house-maze-plains
+p015,rovr,seq5,house-maze-plains
+p016,trad,seq6,house-plains-maze
+p017,trad,seq1,plains-maze-house
+p018,rovr,seq3,maze-plains-house
+p019,trad,seq3,maze-plains-house
+p020,rovr,seq2,plains-house-maze
+p021,rovr,seq1,plains-maze-house
+p022,rovr,seq4,maze-house-plains
+p023,trad,seq2,plains-house-maze
+p024,trad,seq4,maze-house-plains
+p025,rovr,seq1,plains-maze-house
+p026,trad,seq5,house-maze-plains
+p027,trad,seq4,maze-house-plains
+p028,rovr,seq2,plains-house-maze
+p029,rovr,seq3,maze-plains-house
+p030,trad,seq6,house-plains-maze
+p901,chosen by researcher,chosen by researcher,pilot
+p902,chosen by researcher,chosen by researcher,pilot
+p903,chosen by researcher,chosen by researcher,pilot
+p904,chosen by researcher,chosen by researcher,pilot

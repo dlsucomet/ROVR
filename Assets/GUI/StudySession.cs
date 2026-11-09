@@ -1,16 +1,24 @@
 // Assets/GUI/StudySession.cs
-// Runs a study session from the PC. The operator's control page (served by the bridge, Bridge/rovr_bridge.py,
-// at http://127.0.0.1:8765/control) sets the participant code and condition, moves the participant between
-// worlds, and starts, skips and restarts tasks. Twice a second this sends the bridge what's happening (shown
-// live on the page) and takes any new commands back. Each finished task goes to the bridge too, which saves
-// it in a CSV next to its log.
+// Runs a study session. The headset opens on an ID menu (StudyMenu): the participant types their ID, and
+// the fixed table (StudyAssignments) gives their condition (ROVR or traditional) and their sequence of the
+// three worlds. Pilot IDs (p901-p904) wait for the researcher to pick both on the control page.
 //
-// Tasks (StudyTasks): in each world they come in order; the operator reads the instruction, presses Start
-// (F5 on the page), and the task ends by itself when the participant reaches its goal. No time limits.
+//   ID menu -> practice area (tutorial card) -> Next -> world 1 -> Next -> world 2 -> Next -> world 3 -> done
 //
-// On the headset the session waits, with a card saying so, until the control page sets it up. In the Editor
-// it doesn't wait (unless Wait In Editor is on), so the scene still just plays; F5 / F6 / F7 there start,
-// skip and restart the current task.
+// In each world the objectives (StudyTasks) come back to back, shown in a banner at the top of the view.
+// The world's clock and its CSV (StudyWorldLog) start at the participant's first action there: their first
+// stick push (traditional) or when they start speaking (ROVR). When the last objective is reached, the CSV is
+// saved and sent to the PC, and the headset asks them to take it off for the questionnaires; the researcher
+// presses Next on the control page when they're back.
+//
+// The operator's control page (served by the bridge, Bridge/rovr_bridge.py, at http://127.0.0.1:8765/control)
+// shows all this live and has Next, Skip (the current objective), Restart (the world, as a new run), Reset
+// (back to the ID menu for a new participant), and for pilot IDs the condition and sequence. Twice a second
+// this sends the bridge its state and takes any new commands back.
+//
+// Re-entering an ID gives the same assignment; worlds this device already has a completed CSV for are
+// skipped. In the Editor the session doesn't show the menu (unless Wait In Editor is on), so the scene still
+// just plays; there, F5 / F6 / F7 are Next / Skip / Restart.
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -20,40 +28,63 @@ using ROVR;
 
 public class StudySession : MonoBehaviour
 {
-    [Tooltip("In the Editor, also wait for the control page before starting. On the headset it always waits.")]
+    [Tooltip("In the Editor, also show the ID menu and wait, as on the headset.")]
     public bool waitInEditor;
     [Tooltip("Seconds between updates to and from the bridge.")]
     public float syncSeconds = 0.5f;
+    [Tooltip("Seconds between the world log's position rows.")]
+    public float positionEverySeconds = 1f;
 
-    public string Code { get; private set; } = "";
-    public bool IsSetUp => Code.Length > 0;
+    public enum Phase { NoParticipant, AwaitingAssignment, Practice, WorldReady, WorldRunning, WorldDone, Finished }
+
+    public Phase Now { get; private set; } = Phase.NoParticipant;
+    public string Id { get; private set; } = "";
+    public bool IsPilot { get; private set; }
+    public StudyCondition Condition { get; private set; }
+    public int Sequence { get; private set; } // 1-6; 0 = not assigned yet
+    public bool InStudy => Now != Phase.NoParticipant;
     public bool WaitsForSetup => !Application.isEditor || waitInEditor;
-    public string World { get; private set; } = "";
-    public StudyTask CurrentTask => _index >= 0 && _index < _worldTasks.Count ? _worldTasks[_index] : null;
-    public string Status => _state == State.None ? (IsSetUp ? "no task" : "not set up") : _state.ToString().ToLowerInvariant();
-    public float Elapsed => _state == State.Running ? Time.realtimeSinceStartup - _startedAt : 0f;
-
-    private enum State { None, Ready, Running }
+    public string World => _worldIndex >= 0 && _worldIndex < _worlds.Length ? _worlds[_worldIndex] : Now == Phase.Practice ? "Practice" : "";
+    public int WorldPosition => _worldIndex + 1;
+    public StudyTask CurrentTask => _objective >= 0 && _objective < _objectives.Count ? _objectives[_objective] : null;
+    public int Objective => _objective + 1;
+    public int ObjectiveCount => _objectives.Count;
+    public StudyWorldLog WorldLog => _log;
+    public float Seconds => _log != null ? _log.Seconds : 0f;
+    public StudyMenu Menu => _menu;
+    public ObjectiveBanner Banner => _banner;
 
     private VRControlPanel _panel;
     private StudyTasks _tasks;
     private BridgeLink _bridge;
-    private List<StudyTask> _worldTasks = new List<StudyTask>();
-    private int _index = -1;
-    private State _state;
-    private float _startedAt;
-    private DateTime _startedClock;
-    private Vector3 _readyAt;
-    private float _readyYaw;
+    private StudyMenu _menu;
+    private ObjectiveBanner _banner;
+
+    private string[] _worlds = new string[0];
+    private int _worldIndex = -1;
+    private List<StudyTask> _objectives = new List<StudyTask>();
+    private int _objective = -1;
+    private int _skipped;
+    private StudyWorldLog _log;
+    private float _nextPosition;
+    private HashSet<string> _completed = new HashSet<string>();
+    private string _lastNote = ""; // for the control page: the latest thing the session said
 
     private UnityWebRequest _sync;
     private float _nextSync;
     private int _lastCommand = -1; // -1 until the first sync, which tells the bridge to skip older commands
 
-    [Serializable] private class SyncState { public int after; public string code, condition, world, instruction, status; public int task, tasks; public float seconds; }
-    [Serializable] public class Command { public int id; public string kind, code, condition, world; }
+    [Serializable]
+    private class SyncState
+    {
+        public int after;
+        public string code, condition, phase, world, worlds, completed, instruction, note, lastSent, sequenceName;
+        public int sequence, worldPos, objective, objectives, run, pending;
+        public bool pilot;
+        public float seconds;
+    }
+    [Serializable] public class Command { public int id; public string kind, code, condition; public int sequence; }
     [Serializable] private class SyncReply { public Command[] commands; public int latest; }
-    [Serializable] private class TaskResult { public string code, condition, world, instruction, outcome, started, ended; public int task; public float seconds; }
 
     // Called by the panel's Start.
     public void Begin(VRControlPanel panel)
@@ -63,126 +94,330 @@ public class StudySession : MonoBehaviour
         if (_tasks == null) _tasks = gameObject.AddComponent<StudyTasks>();
         _tasks.UsePlaceholdersIfEmpty(panel);
         _bridge = GetComponent<BridgeLink>();
-        if (WaitsForSetup) ShowWaiting();
-    }
-
-    private void ShowWaiting()
-    {
-        if (_panel.tutorialCard != null)
-            _panel.tutorialCard.ShowMessage("Waiting to start", "The researcher will set up your session on the PC.\nPlease wait a moment.", false);
+        _menu = StudyMenu.Build(panel);
+        _menu.OnIdConfirmed += EnterId;
+        _banner = ObjectiveBanner.Build(panel);
+        StudyUploads.QueueUnsent();
+        if (WaitsForSetup) ShowMenu();
     }
 
     private void Update()
     {
         if (_panel == null) return;
         Sync();
+        StudyUploads.Tick(_bridge != null ? _bridge.Url : null);
         EditorKeys();
-        if (_state == State.Running && Reached()) Finish("done");
-    }
-
-    // ---------------------------------------------------------------- the operator's commands
-
-    public void Run(Command c)
-    {
-        switch ((c.kind ?? "").ToLowerInvariant())
+        if (Now != Phase.WorldRunning) return;
+        if (Time.realtimeSinceStartup >= _nextPosition)
         {
-            case "setup":
-                SetUp(c.code, string.Equals(c.condition, "manual", StringComparison.OrdinalIgnoreCase) ? StudyCondition.Manual : StudyCondition.ROVR);
-                break;
-            case "world": GoTo(c.world); break;
-            case "start": StartTask(); break;
-            case "skip": SkipTask(); break;
-            case "restart": RestartTask(); break;
+            _nextPosition = Time.realtimeSinceStartup + positionEverySeconds;
+            Row("position", "", "", "", -1f);
         }
+        if (CurrentTask != null && Reached(CurrentTask)) ObjectiveEnded(false);
     }
 
-    // A new participant: their code and condition. They start in the practice area, with the tutorial.
-    public void SetUp(string code, StudyCondition condition)
+    // ---------------------------------------------------------------- what the participant does
+
+    // From the panel (ROVR: speech, commands, replies) and the sticks (traditional). An action starts the
+    // world's clock if it hasn't started; before that nothing is logged.
+    public void Note(string evt, string input, string system, string result, float push = -1f, bool isAction = false)
     {
-        if (_state == State.Running) Finish("left");
-        Code = (code ?? "").Trim().ToUpperInvariant();
-        _panel.Log("SESSION", "Participant " + Code + ", condition " + condition);
-        _panel.ResetForParticipant();
-        _panel.SetCondition(condition);
-        GoTo("Practice");
-        _panel.ShowTutorial();
+        if (Now == Phase.WorldReady && isAction) StartClock();
+        if (Now == Phase.WorldRunning) Row(evt, input, system, result, push);
     }
 
-    // Moves the participant to a world's start. Once set up, that world's first task is made ready.
-    public void GoTo(string world)
+    // The traditional condition's sticks: ("move", "forward-right", 0.8), ("turn", "left", 0.5), (..., "stopped", 0).
+    public void Stick(string kind, string direction, float push)
     {
-        if (_state == State.Running) Finish("left");
-        if (!_panel.GoToWorld(world, IsSetUp ? "control page" : "button")) return;
-        World = world;
-        _tasks.HidePad();
-        _worldTasks = IsSetUp ? _tasks.For(world) : new List<StudyTask>();
-        _index = -1;
-        _state = State.None;
-        if (IsSetUp) NextTask();
+        bool action = direction != "stopped";
+        Note(kind, direction, "", "", push, action);
     }
 
-    public void StartTask()
+    private void StartClock()
     {
-        if (_state != State.Ready) return;
-        _state = State.Running;
-        _startedAt = Time.realtimeSinceStartup;
-        _startedClock = DateTime.Now;
-        _panel.Log("TASK", World + " task " + (_index + 1) + " started: " + CurrentTask.instruction);
+        _log.StartClock();
+        Now = Phase.WorldRunning;
+        _nextPosition = Time.realtimeSinceStartup + positionEverySeconds;
+        Say("First action: " + World + " clock started");
+        Row("objective_start", "", CurrentTask != null ? CurrentTask.instruction : "", "", -1f);
     }
 
-    public void SkipTask()
+    private void Row(string evt, string input, string system, string result, float push)
     {
-        if (_state == State.None) return;
-        Finish("skipped");
+        if (_log == null) return;
+        Here(out Vector3 local, out float heading);
+        _log.Row(evt, CurrentTask != null ? Objective : 0, input, system, result, push, local, heading);
     }
 
-    // The current task again from where it began, with the timer stopped until Start.
-    public void RestartTask()
+    // The head's spot relative to the world's start (metres, world axes) and which way it faces (0 = north).
+    private void Here(out Vector3 local, out float heading)
     {
-        if (_state == State.None) return;
-        if (_state == State.Running) Report("restarted", Elapsed);
-        _panel.PlaceAt(_readyAt, _readyYaw, World, "task restarted");
-        _state = State.Ready;
-        _panel.Log("TASK", World + " task " + (_index + 1) + " restarted");
+        Transform head = Camera.main != null ? Camera.main.transform : _panel.playerBody;
+        Transform start = _panel.StartOf(World);
+        local = head.position - (start != null ? start.position : Vector3.zero);
+        local.y = 0f;
+        Vector3 f = head.forward;
+        heading = Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
     }
 
-    private void NextTask()
+    private bool Reached(StudyTask task)
     {
-        _index++;
-        if (CurrentTask == null)
-        {
-            _state = State.None;
-            _tasks.HidePad();
-            _panel.Log("TASK", World + ": no more tasks");
-            return;
-        }
-        _state = State.Ready;
-        _readyAt = _panel.playerBody.position;
-        Vector3 f = Camera.main != null ? Camera.main.transform.forward : _panel.playerBody.forward;
-        _readyYaw = Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
-        _tasks.ShowPad(CurrentTask);
-        _panel.Log("TASK", World + " task " + (_index + 1) + " of " + _worldTasks.Count + " ready: " + CurrentTask.instruction);
-    }
-
-    // done, skipped, or left (the operator moved them on mid-task).
-    private void Finish(string outcome)
-    {
-        float seconds = Elapsed;
-        _panel.Log("TASK", World + " task " + (_index + 1) + " " + outcome + (_state == State.Running ? " after " + seconds.ToString("F1") + " s" : ""));
-        Report(outcome, seconds);
-        NextTask();
-    }
-
-    private bool Reached()
-    {
-        var task = CurrentTask;
         Transform head = Camera.main != null ? Camera.main.transform : _panel.playerBody;
         Vector3 to = _tasks.GoalOf(task) - head.position;
         to.y = 0f;
         return to.magnitude <= task.radius;
     }
 
-    // ---------------------------------------------------------------- the bridge
+    // ---------------------------------------------------------------- the session's steps
+
+    private void ShowMenu()
+    {
+        EndWorld("incomplete: new participant", false);
+        Now = Phase.NoParticipant;
+        Id = "";
+        IsPilot = false;
+        Sequence = 0;
+        _worlds = new string[0];
+        _worldIndex = -1;
+        _banner.Hide();
+        _tasks.HidePad();
+        if (_panel.tutorialCard != null) _panel.tutorialCard.Dismiss();
+        _panel.PauseForBreak();
+        _menu.Show();
+        Say("ID menu shown");
+    }
+
+    // An ID typed in the headset's menu (or on the control page, as a fallback).
+    public void EnterId(string typed)
+    {
+        string id = StudyAssignments.NormalizeId(typed);
+        if (id == null)
+        {
+            _menu.ShowMessage("Please try again", "Type the digits of your participant ID, for example 0 0 7 for p007.", true);
+            return;
+        }
+        switch (StudyAssignments.Find(id, out StudyCondition condition, out int sequence))
+        {
+            case StudyAssignments.Lookup.Unknown:
+                Say(id + " typed, but it isn't on the study list");
+                _menu.ShowMessage("ID not found", id + " isn't on the study list.\nPlease check your ID with the researcher.", true);
+                break;
+            case StudyAssignments.Lookup.Pilot:
+                EndWorld("incomplete: new participant", false);
+                Id = id;
+                IsPilot = true;
+                Sequence = 0;
+                Now = Phase.AwaitingAssignment;
+                Say("Pilot " + id + ": waiting for the researcher to pick the condition and sequence");
+                _menu.ShowMessage("Thank you", "The researcher will finish setting up your session.\nPlease wait a moment.", false);
+                break;
+            default:
+                IsPilot = false;
+                StartParticipant(id, condition, sequence);
+                break;
+        }
+    }
+
+    // A pilot participant's condition and sequence, from the control page.
+    public void Assign(StudyCondition condition, int sequence)
+    {
+        if (!IsPilot || !StudyAssignments.IsValidSequence(sequence)) return;
+        if (Now != Phase.AwaitingAssignment && Now != Phase.Practice) return; // once a world has started, the assignment stays
+        StartParticipant(Id, condition, sequence);
+    }
+
+    private void StartParticipant(string id, StudyCondition condition, int sequence)
+    {
+        EndWorld("incomplete: new participant", false);
+        Id = id;
+        Condition = condition;
+        Sequence = sequence;
+        _worlds = StudyAssignments.Worlds(sequence);
+        _worldIndex = -1;
+        _completed = StudyWorldLog.CompletedWorlds(id, condition);
+        Say($"Participant {id}{(IsPilot ? " (pilot)" : "")}: {StudyAssignments.ConditionLabel(condition)}, seq{sequence} {StudyAssignments.SequenceName(sequence)}"
+            + (_completed.Count > 0 ? ". Already completed here: " + string.Join(", ", _completed) : ""));
+
+        _menu.Hide();
+        _banner.Hide();
+        _tasks.HidePad();
+        _panel.ResetForParticipant();
+        _panel.SetCondition(condition);
+        _panel.GoToWorld("Practice", "study: practice");
+        Now = Phase.Practice;
+        _panel.ShowTutorial();
+    }
+
+    // The control page's Next: from practice to the first world, from a finished world to the next one.
+    // During a world, it ends that run as incomplete first.
+    public void Next()
+    {
+        switch (Now)
+        {
+            case Phase.Practice:
+            case Phase.WorldDone:
+                NextWorld();
+                break;
+            case Phase.WorldReady:
+            case Phase.WorldRunning:
+                EndWorld("incomplete: moved on by the researcher", true);
+                NextWorld();
+                break;
+        }
+    }
+
+    private void NextWorld()
+    {
+        int next = _worldIndex + 1;
+        while (next < _worlds.Length && _completed.Contains(StudyAssignments.WorldLabel(_worlds[next])))
+        {
+            Say(_worlds[next] + " skipped: already completed on this device");
+            next++;
+        }
+        if (next >= _worlds.Length) { Finish(); return; }
+        LoadWorld(next);
+    }
+
+    private void LoadWorld(int index)
+    {
+        _worldIndex = index;
+        if (_panel.tutorialCard != null) _panel.tutorialCard.Dismiss();
+        _panel.SetCondition(Condition); // sticks back on after the break
+        _panel.GoToWorld(World, "study: world " + WorldPosition + " of " + _worlds.Length);
+        _objectives = _tasks.For(World);
+        _objective = 0;
+        _skipped = 0;
+        _log = StudyWorldLog.For(Id, Condition, Sequence, World, WorldPosition);
+        Now = Phase.WorldReady;
+        ShowObjective(false);
+        Say($"World {WorldPosition} of {_worlds.Length}: {World}, run {_log.Run}. The clock starts at the first action");
+    }
+
+    private void ShowObjective(bool flash)
+    {
+        var task = CurrentTask;
+        if (task == null) { _banner.Hide(); _tasks.HidePad(); return; }
+        _banner.Show(Objective, ObjectiveCount, task.instruction, flash);
+        _tasks.ShowPad(task);
+    }
+
+    // The current objective reached (or skipped by the researcher); the next one starts at once.
+    private void ObjectiveEnded(bool skipped)
+    {
+        Row(skipped ? "objective_skipped" : "objective_done", "", CurrentTask.instruction, skipped ? "skipped" : "done", -1f);
+        Say($"{World} objective {Objective} of {ObjectiveCount} {(skipped ? "skipped" : "done")} at {_log.Seconds:F1} s");
+        if (skipped) _skipped++;
+        _objective++;
+        if (CurrentTask == null) { CompleteWorld(); return; }
+        Row("objective_start", "", CurrentTask.instruction, "", -1f);
+        ShowObjective(true);
+    }
+
+    private void CompleteWorld()
+    {
+        string label = StudyAssignments.WorldLabel(World);
+        EndWorld(_skipped > 0 ? $"completed ({_skipped} skipped)" : "completed", true);
+        _completed.Add(label);
+        _panel.PauseForBreak();
+        bool more = false;
+        for (int i = _worldIndex + 1; i < _worlds.Length; i++) more |= !_completed.Contains(StudyAssignments.WorldLabel(_worlds[i]));
+        if (!more) { Finish(); return; }
+        Now = Phase.WorldDone;
+        if (_panel.tutorialCard != null)
+            _panel.tutorialCard.ShowMessage("World complete", "Well done! Please take off the headset to answer a few questions.\nThe researcher will start the next world.", false);
+    }
+
+    // Closes the world's CSV (it is sent to the PC). keepIfEmpty: write the file even if the participant
+    // never acted, so the run is on record.
+    private void EndWorld(string result, bool keepIfEmpty)
+    {
+        if (_log == null) return;
+        Here(out Vector3 local, out float heading);
+        bool wrote = _log.ClockStarted || keepIfEmpty;
+        _log.End(result, CurrentTask != null ? Objective : 0, local, heading, keepIfEmpty);
+        Say($"{World}: {result}" + (wrote ? $" (saved {_log.FileName}, {_log.Rows} rows)" : " (nothing to save: no action)"));
+        _log = null;
+        _banner.Hide();
+        _tasks.HidePad();
+        if (Now == Phase.WorldReady || Now == Phase.WorldRunning) Now = Phase.WorldDone;
+    }
+
+    private void Finish()
+    {
+        Now = Phase.Finished;
+        _banner.Hide();
+        _tasks.HidePad();
+        _panel.PauseForBreak();
+        if (_panel.tutorialCard != null)
+            _panel.tutorialCard.ShowMessage("All done", "Thank you for taking part!\nPlease take off the headset.", false);
+        Say("All worlds done for " + Id);
+    }
+
+    public void Skip()
+    {
+        if (Now == Phase.WorldRunning && CurrentTask != null) ObjectiveEnded(true);
+    }
+
+    // The current world again, from its start, as a new run (its own CSV, ...-run2). A run that had started
+    // is saved as incomplete first.
+    public void Restart()
+    {
+        if (_worldIndex < 0 || (Now != Phase.WorldReady && Now != Phase.WorldRunning && Now != Phase.WorldDone)) return;
+        EndWorld("incomplete: restarted by the researcher", false);
+        _completed.Remove(StudyAssignments.WorldLabel(World));
+        LoadWorld(_worldIndex);
+    }
+
+    // Back to the ID menu for the next participant. (Not "Reset": Unity calls a MonoBehaviour's Reset in the Editor.)
+    public void ResetSession()
+    {
+        Say("Reset by the researcher");
+        EndWorld("incomplete: session reset by the researcher", false);
+        _panel.ResetForParticipant();
+        if (WaitsForSetup) { ShowMenu(); return; }
+        Now = Phase.NoParticipant;
+        Id = "";
+        IsPilot = false;
+        _banner.Hide();
+        _tasks.HidePad();
+    }
+
+    private void Say(string message)
+    {
+        _lastNote = message;
+        _panel.Log("STUDY", message);
+    }
+
+    // ---------------------------------------------------------------- the control page
+
+    public void Run(Command c)
+    {
+        switch ((c.kind ?? "").ToLowerInvariant())
+        {
+            case "id": EnterId(c.code); break;
+            case "assign":
+                Assign(string.Equals(c.condition, "trad", StringComparison.OrdinalIgnoreCase) ? StudyCondition.Manual : StudyCondition.ROVR, c.sequence);
+                break;
+            case "next": Next(); break;
+            case "skip": Skip(); break;
+            case "restart": Restart(); break;
+            case "reset": ResetSession(); break;
+        }
+    }
+
+    public static string PhaseName(Phase phase)
+    {
+        switch (phase)
+        {
+            case Phase.AwaitingAssignment: return "waiting for researcher";
+            case Phase.Practice: return "practice";
+            case Phase.WorldReady: return "waiting for first action";
+            case Phase.WorldRunning: return "running";
+            case Phase.WorldDone: return "world done";
+            case Phase.Finished: return "finished";
+            default: return "no participant";
+        }
+    }
 
     private void Sync()
     {
@@ -196,11 +431,17 @@ public class StudySession : MonoBehaviour
         if (_bridge == null || _bridge.Url == null || Time.realtimeSinceStartup < _nextSync) return;
         _nextSync = Time.realtimeSinceStartup + syncSeconds;
 
+        bool assigned = Sequence > 0;
         var state = new SyncState
         {
-            after = _lastCommand, code = Code, condition = _panel.condition.ToString(), world = World,
-            instruction = CurrentTask != null ? CurrentTask.instruction : "", status = Status,
-            task = _index + 1, tasks = _worldTasks.Count, seconds = Elapsed,
+            after = _lastCommand, code = Id, pilot = IsPilot, phase = PhaseName(Now),
+            condition = assigned ? StudyAssignments.ConditionLabel(Condition) : "",
+            sequence = Sequence, sequenceName = assigned ? StudyAssignments.SequenceName(Sequence) : "",
+            worlds = string.Join(",", Array.ConvertAll(_worlds, StudyAssignments.WorldLabel)),
+            completed = string.Join(",", _completed), world = StudyAssignments.WorldLabel(World), worldPos = WorldPosition,
+            instruction = CurrentTask != null ? CurrentTask.instruction : "", objective = CurrentTask != null ? Objective : 0,
+            objectives = ObjectiveCount, run = _log != null ? _log.Run : 0, seconds = Seconds, note = _lastNote,
+            pending = StudyUploads.Pending, lastSent = StudyUploads.LastSent ?? "",
         };
         _sync = Post(_bridge.Url + "/session/sync", JsonUtility.ToJson(state));
         _sync.SendWebRequest();
@@ -222,20 +463,6 @@ public class StudySession : MonoBehaviour
         }
     }
 
-    private void Report(string outcome, float seconds)
-    {
-        if (_bridge == null || _bridge.Url == null || CurrentTask == null) return;
-        var result = new TaskResult
-        {
-            code = Code, condition = _panel.condition.ToString(), world = World, task = _index + 1,
-            instruction = CurrentTask.instruction, outcome = outcome, seconds = seconds,
-            started = _state == State.Running ? _startedClock.ToString("yyyy-MM-dd HH:mm:ss.fff") : "",
-            ended = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-        };
-        var request = Post(_bridge.Url + "/session/task", JsonUtility.ToJson(result));
-        request.SendWebRequest().completed += _ => request.Dispose();
-    }
-
     private static UnityWebRequest Post(string url, string json)
     {
         var request = new UnityWebRequest(url, "POST")
@@ -253,10 +480,15 @@ public class StudySession : MonoBehaviour
 #if UNITY_EDITOR
         var keyboard = UnityEngine.InputSystem.Keyboard.current;
         if (keyboard == null) return;
-        if (keyboard.f5Key.wasPressedThisFrame) StartTask();
-        if (keyboard.f6Key.wasPressedThisFrame) SkipTask();
-        if (keyboard.f7Key.wasPressedThisFrame) RestartTask();
+        if (keyboard.f5Key.wasPressedThisFrame) Next();
+        if (keyboard.f6Key.wasPressedThisFrame) Skip();
+        if (keyboard.f7Key.wasPressedThisFrame) Restart();
 #endif
+    }
+
+    private void OnApplicationQuit()
+    {
+        EndWorld("incomplete: app closed", false);
     }
 
     private void OnDestroy()

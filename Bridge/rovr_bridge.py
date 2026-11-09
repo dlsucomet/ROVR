@@ -9,11 +9,14 @@
   (Assets/StreamingAssets/ggml-base.bin). The audio is not saved, only the text.
 - Prints each voice command live: what was heard, what is in view, the model's reply and how
   long it took. Also accepts plain log lines on POST /log (buttons, teleports, ...).
-- Runs the study session: the operator's control page at http://127.0.0.1:8765/control (this PC
-  only) sets the participant code and condition, moves them between worlds and starts, skips and
-  restarts tasks; the headset picks the commands up and reports back twice a second. Each task's
-  result is saved in Bridge/logs/tasks_<code>_<date>_<time>.csv. The same commands can be typed here:
-  setup PP1 rovr | setup PP1 manual | practice | plain | maze | house | start | skip | restart
+- Runs the study session with the operator's control page at http://127.0.0.1:8765/control (this
+  PC only). The participant types their ID in the headset, which gets their condition and world
+  sequence from a fixed table; the page shows the session live, and has Next (the next world), Skip
+  (an objective), Restart (the world, as a new run), Reset (a new participant), and for pilot IDs the
+  condition and sequence. The headset picks commands up and reports back twice a second. Each world
+  run's CSV (p007-rovr-house.csv...) is sent here when it ends and saved in Bridge/logs/study/, never
+  overwritten. The same commands can be typed here:
+  id p007 | assign rovr|trad 1-6 | next | skip | restart | reset
 - Saves everything to Bridge/logs/bridge_<date>_<time>.txt.
 
 Only the Python standard library is used. Run from the project folder:
@@ -269,44 +272,47 @@ def answer_headsets(sock, port):
 
 class Session:
     lock = Lock()
-    commands = []     # {"id", "kind", "code", "condition", "world"}, oldest first
+    commands = []     # {"id", "kind", "code", "condition", "sequence"}, oldest first
     next_id = 1
-    state = {}        # what the headset last said: code, condition, world, task, tasks, instruction, status, seconds
+    state = {}        # what the headset last said: code, condition, sequence, phase, world, objective, seconds...
     seen = 0.0        # when the headset last synced (time.time())
     logs = ""         # Bridge/logs
-    stamp = ""        # this run's date and time, for the CSV names
+    study = ""        # Bridge/logs/study: the world CSVs
+    saved = deque(maxlen=12)  # the latest world CSVs saved here, newest last
 
 
-WORLDS = ("practice", "plain", "maze", "house")
-CSV_COLUMNS = ["participant", "condition", "world", "task", "instruction", "outcome", "seconds", "started", "ended"]
+SEQUENCES = ["plains-maze-house", "plains-house-maze", "maze-plains-house",
+             "maze-house-plains", "house-maze-plains", "house-plains-maze"]
+WORLD_LOG_NAME = re.compile(r"^p\d{3}-(rovr|trad)-(plains|maze|house)(-run\d+)?\.csv$")
+USAGE = "commands: id p007 | assign rovr|trad 1-6 (pilot IDs) | next | skip | restart | reset"
 
 
-def command(kind, code="", condition="", world=""):
+def command(kind, code="", condition="", sequence=0):
     """Queues a command for the headset, which picks it up on its next sync."""
     with Session.lock:
-        c = {"id": Session.next_id, "kind": kind, "code": code, "condition": condition, "world": world}
+        c = {"id": Session.next_id, "kind": kind, "code": code, "condition": condition, "sequence": sequence}
         Session.next_id += 1
         Session.commands.append(c)
         del Session.commands[:-50]
-    log("CONTROL", " ".join(x for x in (kind, code, condition, world) if x), CYAN)
+    log("CONTROL", " ".join(str(x) for x in (kind, code, condition, sequence or "") if x), CYAN)
     return c
 
 
 def parse_command(text):
-    """'setup PP1 rovr', 'plain', 'start'... -> queued, or an error message."""
+    """'id p007', 'assign trad 3', 'next'... -> queued, or an error message."""
     words = text.strip().lower().split()
     if not words:
         return None
-    if words[0] == "setup":
-        if len(words) != 3 or words[2] not in ("rovr", "manual"):
-            return "usage: setup <code> rovr|manual"
-        command("setup", code=words[1].upper(), condition="Manual" if words[2] == "manual" else "ROVR")
-    elif words[0] in WORLDS or (words[0] == "world" and len(words) == 2 and words[1] in WORLDS):
-        command("world", world=(words[-1]).capitalize())
-    elif words[0] in ("start", "skip", "restart"):
+    if words[0] == "id" and len(words) == 2:
+        command("id", code=words[1])
+    elif words[0] == "assign":
+        if len(words) != 3 or words[1] not in ("rovr", "trad") or not re.fullmatch(r"(seq)?[1-6]", words[2]):
+            return "usage: assign rovr|trad <sequence 1-6>"
+        command("assign", condition=words[1], sequence=int(words[2][-1]))
+    elif words[0] in ("next", "skip", "restart", "reset"):
         command(words[0])
     else:
-        return "commands: setup <code> rovr|manual, practice, plain, maze, house, start, skip, restart"
+        return USAGE
     return None
 
 
@@ -321,21 +327,31 @@ def read_typed_commands():
         pass
 
 
-def save_task(result):
-    """One row per finished task, in a CSV per participant code."""
-    import csv
-    code = re.sub(r"[^A-Za-z0-9_-]", "", str(result.get("code") or "")) or "no-code"
-    path = os.path.join(Session.logs, f"tasks_{code}_{Session.stamp}.csv")
-    new = not os.path.exists(path)
-    row = {"participant": result.get("code", ""), "condition": result.get("condition", ""), "world": result.get("world", ""),
-           "task": result.get("task", ""), "instruction": result.get("instruction", ""), "outcome": result.get("outcome", ""),
-           "seconds": f"{float(result.get('seconds') or 0):.2f}", "started": result.get("started", ""), "ended": result.get("ended", "")}
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        if new:
-            writer.writeheader()
-        writer.writerow(row)
-    log("TASK", f"{row['world']} task {row['task']}: {row['outcome']} in {row['seconds']} s  {GREY}[{os.path.basename(path)}]{RESET}", GREEN)
+def save_world_log(data):
+    """A world's CSV from the headset, saved in Bridge/logs/study/ under its own name. Never overwrites:
+    the same file sent twice is kept once, and a different file with the same name gets -copy2, -copy3..."""
+    name, content = str(data.get("name") or ""), str(data.get("content") or "")
+    if not WORLD_LOG_NAME.match(name):
+        raise ValueError(f"unexpected file name {name!r}")
+    os.makedirs(Session.study, exist_ok=True)
+    stem, path, n = name[:-4], os.path.join(Session.study, name), 1
+    while os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                log("SAVED", f"{name} (already here)", GREY)
+                return path
+        n += 1
+        path = os.path.join(Session.study, f"{stem}-copy{n}.csv")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    rows = max(0, content.count("\n") - 1)
+    last = content.strip().splitlines()[-1] if content.strip() else ""
+    outcome = "completed" if ",world_end," in last and ",completed" in last else "incomplete" if ",world_end," in last else "no end row"
+    log("SAVED", f"{os.path.basename(path)}: {rows} rows, {outcome}  {GREY}[{path}]{RESET}", GREEN)
+    with Session.lock:
+        Session.saved.append({"name": os.path.basename(path), "rows": rows, "outcome": outcome,
+                              "time": datetime.datetime.now().strftime("%H:%M:%S")})
+    return path
 
 
 CONTROL_PAGE = """<!doctype html>
@@ -346,87 +362,135 @@ CONTROL_PAGE = """<!doctype html>
   * { box-sizing:border-box; }
   body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
   main { max-width:860px; margin:0 auto; padding:20px 16px 40px; display:grid; gap:14px; }
-  h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px; }
+  h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .dot { width:10px; height:10px; border-radius:50%; background:var(--bad); display:inline-block; }
   .dot.on { background:var(--ok); }
   section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
   .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   input, select, button { font:inherit; border-radius:8px; border:1px solid var(--line); padding:8px 12px; background:#fff; color:var(--text); }
-  input { width:110px; text-transform:uppercase; }
+  input { width:110px; }
   button { cursor:pointer; background:#eef1f6; }
-  button:hover { background:#e2e7f0; }
+  button:hover:not(:disabled) { background:#e2e7f0; }
+  button:disabled { opacity:.45; cursor:default; }
   button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.primary:hover { filter:brightness(1.07); }
-  .who { font-size:16px; font-weight:600; }
+  button.primary:hover:not(:disabled) { filter:brightness(1.07); }
+  .who { font-size:18px; font-weight:600; }
+  .worlds { display:flex; gap:8px; flex-wrap:wrap; margin:2px 0 4px; }
+  .world { border:1px solid var(--line); border-radius:99px; padding:4px 12px; color:var(--muted); }
+  .world.now { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .world.done { border-color:var(--ok); color:var(--ok); }
   .instr { font-size:20px; font-weight:600; margin:6px 0 4px; min-height:28px; }
-  .status { display:flex; gap:18px; align-items:baseline; margin:4px 0 12px; color:var(--muted); }
+  .status { display:flex; gap:18px; align-items:baseline; flex-wrap:wrap; margin:4px 0 12px; color:var(--muted); }
   .timer { font:600 34px/1 ui-monospace, Consolas, monospace; color:var(--text); }
   .badge { font-size:13px; padding:2px 8px; border-radius:99px; background:#eef1f6; color:var(--muted); }
   .badge.running { background:#e5f6ec; color:var(--ok); }
-  .badge.ready { background:#fff4dc; color:var(--warn); }
+  .badge.ready, .badge.waiting { background:#fff4dc; color:var(--warn); }
+  .pilot { border:1px dashed var(--warn); border-radius:10px; padding:10px 12px; margin-top:10px; }
   pre { margin:0; max-height:300px; overflow:auto; font:12px/1.5 ui-monospace, Consolas, monospace; white-space:pre-wrap; }
+  ul { margin:0; padding-left:18px; }
   .note { color:var(--muted); font-size:13px; }
+  [hidden] { display:none !important; }
 </style></head><body><main>
 <h1><span id="dot" class="dot"></span> ROVR session control <span id="link" class="note"></span></h1>
 
 <section><h2>Participant</h2>
-  <div class="row">
-    <input id="code" placeholder="PP1" maxlength="8" aria-label="Participant code">
-    <select id="condition" aria-label="Condition"><option value="ROVR">ROVR (voice)</option><option value="Manual">Manual (controller)</option></select>
-    <button class="primary" onclick="setup()">Set up</button>
-    <span class="who" id="who"></span>
+  <div class="who" id="who">Waiting for the participant to type their ID in the headset</div>
+  <div class="note" id="sequence"></div>
+  <div class="pilot" id="pilot" hidden>
+    <strong>Pilot ID:</strong> choose the condition and sequence for today.
+    <div class="row" style="margin-top:8px">
+      <select id="pcondition" aria-label="Condition"><option value="rovr">ROVR (voice)</option><option value="trad">Traditional (controller)</option></select>
+      <select id="psequence" aria-label="Sequence"></select>
+      <button class="primary" onclick="assign()">Assign</button>
+    </div>
   </div>
-  <p class="note">Set up moves them to the practice area and shows their tutorial.</p>
+  <div class="row" style="margin-top:12px">
+    <span class="note">Or type the ID here:</span>
+    <input id="code" placeholder="p007" maxlength="4" aria-label="Participant ID">
+    <button onclick="setId()">Set ID</button>
+    <button onclick="if (confirm('Back to the ID menu for a new participant? A world in progress is saved as incomplete.')) send({kind:'reset'})">Reset (new participant)</button>
+  </div>
 </section>
 
 <section><h2>World</h2>
+  <div class="worlds" id="worlds"></div>
+  <div class="instr" id="instr">-</div>
+  <div class="status"><span class="timer" id="timer">0.0 s</span><span class="badge" id="phase">-</span><span id="objno"></span><span id="run"></span></div>
   <div class="row">
-    <button onclick="send({kind:'world', world:'Practice'})">Practice</button>
-    <button onclick="send({kind:'world', world:'Plain'})">Plain</button>
-    <button onclick="send({kind:'world', world:'Maze'})">Maze</button>
-    <button onclick="send({kind:'world', world:'House'})">House</button>
+    <button class="primary" id="next" onclick="next()">Next (F5)</button>
+    <button id="skip" onclick="send({kind:'skip'})">Skip objective</button>
+    <button id="restart" onclick="if (confirm('Restart this world from its start, as a new run? Its CSV so far is kept, marked incomplete.')) send({kind:'restart'})">Restart world</button>
   </div>
+  <p class="note" id="note"></p>
+  <p class="note">The clock starts at their first action in each world: first stick push, or when they start speaking (ROVR: they press A to unmute first). Objectives follow each other by themselves. After the last one the headset asks them to take it off for the questionnaires; press Next when they're back.</p>
 </section>
 
-<section><h2>Task <span id="taskno"></span></h2>
-  <div class="instr" id="instr">No task</div>
-  <div class="status"><span class="timer" id="timer">0.0 s</span><span class="badge" id="status">-</span></div>
-  <div class="row">
-    <button class="primary" onclick="send({kind:'start'})">Start (F5)</button>
-    <button onclick="send({kind:'skip'})">Skip</button>
-    <button onclick="send({kind:'restart'})">Restart</button>
-  </div>
-  <p class="note">Read the instruction, say "go", then Start. The task ends by itself when they reach the goal. Results: <span id="csv">Bridge/logs/tasks_&lt;code&gt;_*.csv</span></p>
+<section><h2>Saved world logs</h2>
+  <ul id="saved"><li class="note">None yet this run. They go to Bridge/logs/study/.</li></ul>
+  <p class="note" id="pending"></p>
 </section>
 
 <section><h2>Log</h2><pre id="log"></pre></section>
 </main>
 <script>
+const SEQUENCES = __SEQUENCES__;
+const seqSelect = document.getElementById('psequence');
+SEQUENCES.forEach((s, i) => { const o = document.createElement('option'); o.value = i + 1; o.textContent = 'seq' + (i + 1) + ': ' + s; seqSelect.appendChild(o); });
+let state = {};
 async function send(c) {
   await fetch('/control/command', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(c) });
   refresh();
 }
-function setup() {
-  const code = document.getElementById('code').value.trim().toUpperCase();
+function setId() {
+  const code = document.getElementById('code').value.trim();
   if (!code) { document.getElementById('code').focus(); return; }
-  send({kind:'setup', code, condition: document.getElementById('condition').value});
+  send({kind:'id', code});
 }
-document.addEventListener('keydown', e => { if (e.key === 'F5') { e.preventDefault(); send({kind:'start'}); } });
+function assign() {
+  send({kind:'assign', condition: document.getElementById('pcondition').value, sequence: parseInt(seqSelect.value)});
+}
+function next() {
+  if ((state.phase === 'running' || state.phase === 'waiting for first action')
+      && !confirm('This world is not finished. End it as incomplete and go to the next one?')) return;
+  send({kind:'next'});
+}
+document.addEventListener('keydown', e => { if (e.key === 'F5') { e.preventDefault(); next(); } });
+const fmt = (n) => (n || 0).toFixed(1) + ' s';
 async function refresh() {
   try {
     const r = await (await fetch('/control/status')).json();
-    const s = r.state || {};
+    const s = state = r.state || {};
     document.getElementById('dot').className = 'dot' + (r.connected ? ' on' : '');
     document.getElementById('link').textContent = r.connected ? 'headset connected' : 'headset not connected';
-    document.getElementById('who').textContent = s.code ? s.code + ' \u00b7 ' + s.condition + (s.world ? ' \u00b7 ' + s.world : '') : 'not set up';
-    document.getElementById('taskno').textContent = s.tasks ? (s.task <= s.tasks ? s.task + ' of ' + s.tasks : 'all done') : '';
-    document.getElementById('instr').textContent = s.instruction || (s.tasks ? 'No more tasks in this world' : 'No task');
-    document.getElementById('timer').textContent = (s.seconds || 0).toFixed(1) + ' s';
-    const st = document.getElementById('status');
-    st.textContent = s.status || '-';
-    st.className = 'badge ' + (s.status || '');
-    document.getElementById('log').textContent = r.recent.slice().reverse().join('\n');
+    const phase = s.phase || 'no participant';
+    document.getElementById('who').textContent = s.code
+      ? s.code + (s.pilot ? ' (pilot)' : '') + (s.condition ? ' · ' + (s.condition === 'trad' ? 'traditional' : 'ROVR') + ' · seq' + s.sequence : '')
+      : 'Waiting for the participant to type their ID in the headset';
+    document.getElementById('sequence').textContent = s.sequenceName ? 'Order: ' + s.sequenceName.split('-').join(' → ') : '';
+    document.getElementById('pilot').hidden = !(s.pilot && (phase === 'waiting for researcher' || phase === 'practice'));
+    const worlds = (s.worlds || '').split(',').filter(Boolean), done = (s.completed || '').split(',');
+    document.getElementById('worlds').innerHTML = worlds.map((w, i) => {
+      const now = s.worldPos === i + 1 && phase !== 'finished', ok = done.includes(w);
+      return '<span class="world' + (ok ? ' done' : now ? ' now' : '') + '">' + (i + 1) + ' ' + w + (ok ? ' ✓' : '') + '</span>';
+    }).join('');
+    document.getElementById('instr').textContent = s.instruction || (phase === 'practice' ? 'Practice area (not logged). Press Next for the first world.' : phase === 'world done' ? 'Questionnaires. Press Next when they are back in the headset.' : phase === 'finished' ? 'All worlds done.' : '-');
+    document.getElementById('timer').textContent = fmt(s.seconds);
+    const badge = document.getElementById('phase');
+    badge.textContent = phase;
+    badge.className = 'badge ' + (phase === 'running' ? 'running' : phase.startsWith('waiting') ? 'waiting' : '');
+    document.getElementById('objno').textContent = s.objective ? 'objective ' + s.objective + ' of ' + s.objectives : '';
+    document.getElementById('run').textContent = s.run > 1 ? 'run ' + s.run : '';
+    document.getElementById('note').textContent = s.note || '';
+    document.getElementById('next').disabled = !['practice', 'waiting for first action', 'running', 'world done'].includes(phase);
+    document.getElementById('skip').disabled = phase !== 'running';
+    document.getElementById('restart').disabled = !['waiting for first action', 'running', 'world done'].includes(phase);
+    const saved = r.saved || [];
+    document.getElementById('saved').innerHTML = saved.length
+      ? saved.slice().reverse().map(f => '<li>' + f.time + '  <strong>' + f.name + '</strong>: ' + f.rows + (f.rows === 1 ? ' row, ' : ' rows, ') + f.outcome + '</li>').join('')
+      : '<li class="note">None yet this run. They go to Bridge/logs/study/.</li>';
+    document.getElementById('pending').textContent = s.pending ? s.pending + ' file(s) on the headset still waiting to be sent' : '';
+    document.getElementById('log').textContent = r.recent.slice().reverse().join('\\n');
   } catch (e) {
     document.getElementById('link').textContent = 'bridge not answering';
   }
@@ -434,7 +498,7 @@ async function refresh() {
 setInterval(refresh, 500);
 refresh();
 </script></body></html>
-"""
+""".replace("__SEQUENCES__", json.dumps(SEQUENCES))
 
 
 # ---- the server ---------------------------------------------------------------------------
@@ -482,7 +546,8 @@ class Bridge(BaseHTTPRequestHandler):
         elif self.path == "/control/status":
             if self._from_this_pc():
                 with Session.lock:
-                    status = {"connected": time.time() - Session.seen < 3, "state": Session.state, "recent": list(_recent)}
+                    status = {"connected": time.time() - Session.seen < 3, "state": Session.state, "recent": list(_recent),
+                              "saved": list(Session.saved)}
                 self._reply(200, json.dumps(status).encode())
         elif self.path == "/ping":
             # BridgeLink.cs checks with this that it found a ROVR bridge, and that it still answers.
@@ -507,26 +572,30 @@ class Bridge(BaseHTTPRequestHandler):
             self._log_line(body)
         elif self.path == "/session/sync":
             self._session_sync(body)
-        elif self.path == "/session/task":
+        elif self.path == "/session/worldlog":
+            # A world's CSV from the headset. Only a 200 tells it the file is safe here; otherwise it sends again.
             try:
-                save_task(json.loads(body))
-                self._reply(200, b"{}")
+                path = save_world_log(json.loads(body))
+                self._reply(200, json.dumps({"saved": os.path.basename(path)}).encode())
             except (ValueError, OSError) as e:
-                log("ERROR", f"task result not saved: {e}", RED)
+                log("ERROR", f"world log not saved: {e}", RED)
                 self._reply(400, json.dumps({"error": str(e)}).encode())
         elif self.path == "/control/command":
             if self._from_this_pc():
                 try:
                     c = json.loads(body)
                     kind = str(c.get("kind", "")).lower()
-                    if kind == "setup":
-                        command("setup", code=str(c.get("code", "")).upper(), condition="Manual" if str(c.get("condition")) == "Manual" else "ROVR")
-                    elif kind == "world":
-                        command("world", world=str(c.get("world", "")))
-                    elif kind in ("start", "skip", "restart"):
+                    if kind == "id":
+                        command("id", code=str(c.get("code", "")).strip().lower())
+                    elif kind == "assign":
+                        condition = "trad" if str(c.get("condition", "")).lower() == "trad" else "rovr"
+                        sequence = int(c.get("sequence") or 0)
+                        if 1 <= sequence <= len(SEQUENCES):
+                            command("assign", condition=condition, sequence=sequence)
+                    elif kind in ("next", "skip", "restart", "reset"):
                         command(kind)
                     self._reply(200, b"{}")
-                except ValueError:
+                except (ValueError, TypeError):
                     self._reply(400, b"{}")
         elif self.path.split("?")[0] == "/transcribe":
             self._transcribe(body, "kind=partial" not in self.path)
@@ -663,7 +732,7 @@ def main():
     logs = os.path.join(HERE, "logs")
     os.makedirs(logs, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    Session.logs, Session.stamp = logs, stamp
+    Session.logs, Session.study = logs, os.path.join(logs, "study")
     path = os.path.join(logs, "bridge_" + stamp + ".txt")
     _log_file = open(path, "w", encoding="utf-8")
 
@@ -703,7 +772,8 @@ def main():
     else:
         print(f"Wi-Fi: off (cable and this PC only). For a headset on Wi-Fi: run_bridge_wifi.bat, or --wifi.")
     print(f"Session control: {BOLD}http://127.0.0.1:{args.port}/control{RESET} (this PC only), or type here: "
-          f"setup PP1 rovr | plain | start | skip | restart")
+          f"{USAGE[len('commands: '):]}")
+    print(f"World logs (CSV) are saved in {Session.study}")
     print(f"{GREY}Ctrl+C to stop.{RESET}\n")
     Thread(target=read_typed_commands, daemon=True).start()
 

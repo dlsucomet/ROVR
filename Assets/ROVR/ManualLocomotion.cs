@@ -9,6 +9,12 @@
 //
 // Each stretch of moving or turning is summarised for the transcript when the stick is let go
 // ("Moved 3.2 m in 2.4 s, top speed 1.9 m/s"), so Manual sessions have movement data too.
+//
+// For the study's world log (OnInput): the left stick's direction in one of 8 (forward, forward-right,
+// right, back-right, back, back-left, left, forward-left), reported each time it changes, with how far the
+// stick is pushed; "stopped" when it's let go. A direction near a boundary has to cross it by a few
+// degrees before it counts as changed, so a thumb resting on the edge doesn't flicker between two.
+// The right stick: "left" / "right" when a turn starts or reverses, "stopped" when it ends.
 using System;
 using UnityEngine;
 using UnityEngine.XR;
@@ -31,6 +37,13 @@ namespace ROVR
         // A finished stretch of moving or turning, for the transcript.
         public event Action<string> OnLog;
 
+        // ("move", direction, push) or ("turn", "left" / "right" / "stopped", push), each time it changes.
+        public event Action<string, string, float> OnInput;
+
+        public static readonly string[] Directions =
+            { "forward", "forward-right", "right", "back-right", "back", "back-left", "left", "forward-left" };
+        const float DirectionHysteresis = 8f; // degrees past a boundary before the direction counts as changed
+
         // For tests: when set, used instead of the controllers.
         public Vector2? SimulatedMove { get; set; }
         public Vector2? SimulatedTurn { get; set; }
@@ -39,6 +52,8 @@ namespace ROVR
         Transform _head;
         float _moveStart = -1f, _moved, _topSpeed;
         float _turnStart = -1f, _turned;
+        int _direction = -1; // index into Directions while the left stick is pushed, else -1
+        int _turnSign;       // -1 left, 1 right, 0 not turning
 
         void Awake()
         {
@@ -54,6 +69,8 @@ namespace ROVR
         {
             Summarise(true);
             IsTurning = IsMoving = false;
+            ReportMove(-1, 0f);
+            ReportTurn(0, 0f);
         }
 
         void Update()
@@ -78,6 +95,7 @@ namespace ROVR
                 _moved += moved.magnitude;
                 _topSpeed = Mathf.Max(_topSpeed, speed);
             }
+            ReportMove(IsMoving ? DirectionOf(move, _direction) : -1, push);
 
             // Turn: left / right only.
             float t = Mathf.Abs(turn.x) <= deadZone ? 0f : Mathf.Sign(turn.x) * (Mathf.Abs(turn.x) - deadZone) / (1f - deadZone);
@@ -89,8 +107,32 @@ namespace ROVR
                 if (_turnStart < 0f) { _turnStart = Time.time; _turned = 0f; }
                 _turned += degrees;
             }
+            ReportTurn(IsTurning ? (int)Mathf.Sign(t) : 0, Mathf.Abs(t));
 
             Summarise(false);
+        }
+
+        // Which of the 8 directions the stick points, keeping the current one until the stick is clearly
+        // past its boundary (22.5 degrees from its centre plus the hysteresis).
+        public static int DirectionOf(Vector2 stick, int current)
+        {
+            float angle = Mathf.Atan2(stick.x, stick.y) * Mathf.Rad2Deg; // 0 = forward, 90 = right
+            if (current >= 0 && Mathf.Abs(Mathf.DeltaAngle(angle, current * 45f)) <= 22.5f + DirectionHysteresis) return current;
+            return (int)Mathf.Repeat(Mathf.Round(angle / 45f), 8f);
+        }
+
+        void ReportMove(int direction, float push)
+        {
+            if (direction == _direction) return;
+            _direction = direction;
+            OnInput?.Invoke("move", direction >= 0 ? Directions[direction] : "stopped", direction >= 0 ? push : 0f);
+        }
+
+        void ReportTurn(int sign, float push)
+        {
+            if (sign == _turnSign) return;
+            _turnSign = sign;
+            OnInput?.Invoke("turn", sign < 0 ? "left" : sign > 0 ? "right" : "stopped", sign != 0 ? push : 0f);
         }
 
         // Logs a stretch of moving or turning once its stick is let go (or now, when stopping).
