@@ -4,7 +4,13 @@ The step-by-step plan for one session, with what the researchers say. The same f
 
 **How a session runs:** the participant types their ID in the headset's opening menu. Their ID decides their condition and the order of the three worlds (one of six sequences, [`../assignment-table.csv`](../assignment-table.csv)). The researchers follow along on the bridge's **control page** on the PC, `http://127.0.0.1:8765/control` (see the [README](../../README.md), step 4), which has **Next** (the next world), **Skip objective**, **Restart world** and **Reset** (a new participant). In each world the objectives appear in the headset one after the other, and the clock starts at the participant's first action there. Each world run is saved as its own CSV, for example `Bridge/logs/study/p007-trad-house.csv`.
 
-> **Placeholders:** the build's objectives and practice area are placeholders for now. Replace them, and the world introductions below, before user testing. The placeholder House uses the powder room (by the kitchen) as "the bathroom".
+> **Placeholders:** the practice area and the tutorial card's diagrams are placeholders for now. The objectives (below, and `Assets/GUI/StudyTasks.cs`) are set but not yet piloted.
+
+**The objectives, per world** (they appear one at a time at the top of the participant's view):
+
+- **Plains:** five landmarks, one in each part of the field. The current one has a yellow pillar beside it with a beacon of light above it. *Go to the tree* → *Go to the pond under the beacon* → *Go to the rock under the beacon* → *Go to the pond under the beacon* → *Go to the rock under the beacon*. Reached within 1.5 m.
+- **Maze:** a glowing trail on the ground follows the correct route. *Follow the trail to checkpoint 1*, *2* and *3* (yellow pillars, about a quarter, half and three quarters of the way), then *Follow the trail to the exit*.
+- **House:** two objectives per room, no markers: *Go to the TV in the living room* → *Go to the bookshelf in the living room* → *Go to the fridge in the kitchen* → *Go to the dining table* → *Go to the desk in the bedroom* → *Go to the bed* → *Go into the bedroom bathroom* → *Turn towards the shower* → *Go into the guest bathroom* → *Turn towards the toilet*. Furniture is reached within 1 m; a room once past its doorway; a turn once facing the object (within 15°) for half a second.
 
 ## Roles
 
@@ -66,14 +72,14 @@ Questions are fine during practice. When they're comfortable, the operator press
 
 The control page shows which world is next. Read that world's introduction:
 
-- **Plains:** *"This is an open plain. Your objectives appear at the top of your view. Take your time to read each one."*
-- **Maze:** *"In this world you start inside a maze. Your goal is to find the exit, marked by the yellow pad. There's a small map in the corner of your view that you can use."*
-- **House:** *"This is a house. Your objectives ask you to visit its rooms in order. They appear at the top of your view."*
+- **Plains:** *"This is an open plain. Your objectives appear at the top of your view, and each place you need to go is marked by a yellow beacon. Take your time to read each one."*
+- **Maze:** *"In this world you start at the entrance of a maze. Follow the glowing trail on the ground: it leads past three checkpoints, marked by yellow pillars, to the exit. There's a small map in the corner of your view that you can use."*
+- **House:** *"This is a house. Your objectives take you through its rooms in order, two in each room. They appear at the top of your view."*
 
 Then:
 
 1. **The clock starts by itself** at their first action in that world: their first push on a stick, or when they start speaking. Reading the objective first doesn't count. The control page shows "waiting for first action", then "running" and the time. Nothing before their first action is logged. **ROVR:** they press **A** to unmute first; that press doesn't start the clock.
-2. **Objectives follow each other by themselves.** When they reach one (a yellow pad, a room, the maze exit), the banner flashes green and shows the next one, while the clock keeps running. Don't read them out: they're in the headset. There's no time limit.
+2. **Objectives follow each other by themselves.** When they reach one (a landmark, a checkpoint, a piece of furniture, a room, or turning towards something), the banner flashes green and shows the next one, while the clock keeps running. Don't read them out: they're in the headset. There's no time limit.
 3. **If they're stuck** or something goes wrong: **Skip objective** moves on to the next one (logged as skipped), and **Restart world** starts the world again from its beginning as a new run (its own CSV, `...-run2.csv`; the first run is kept, marked incomplete). Note either on the observation sheet.
 4. **After the last objective** the headset says the world is complete and asks them to take it off. The world's CSV is saved and sent to the PC: it appears under "Saved world logs" on the control page.
 

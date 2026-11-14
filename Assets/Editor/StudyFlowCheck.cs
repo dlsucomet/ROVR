@@ -4,10 +4,13 @@
 // Plays main.unity and walks a study session through the real StudySession, StudyMenu, ObjectiveBanner and
 // StudyWorldLog, checking the CSVs it writes:
 //   - p002 (traditional, seq1: plains, maze, house) types the ID on the menu; practice; Next.
-//   - Plains: nothing is logged until the first stick push; then 8-direction rows; the four objectives are
-//     reached one after the other; world_end completed; the "World complete" card.
-//   - Maze: a run restarted by the researcher (run 1 incomplete, run 2 completed at the exit).
-//   - House: every objective skipped (completed, 4 skipped). Then finished.
+//   - Every objective's object is in the scene, and the Maze trail follows the 52-cell correct route.
+//   - Plains: nothing is logged until the first stick push; then 8-direction rows; the five landmarks are
+//     reached one after the other, each with a pillar and beacon; world_end completed; the "World complete" card.
+//   - Maze: a run restarted by the researcher (run 1 incomplete); run 2 reaches the three checkpoints (pillars,
+//     no beacon) and the exit.
+//   - House: no markers; the furniture, the two bathrooms and "turn towards the shower" reached; the last
+//     objective skipped (completed, 1 skipped). Then finished.
 //   - p002 again: all three worlds already completed on this device, so Next goes straight to "All done".
 //   - p050 isn't on the list; p901 (pilot) waits until the researcher assigns ROVR seq3 (maze first).
 //   - ROVR in the Maze: speech starts the clock; the heard sentence is logged.
@@ -127,6 +130,12 @@ public static class StudyFlowCheck
         yield return 0.5f;
         Check(session.Now == StudySession.Phase.WorldReady && session.World == "Plain" && session.WorldPosition == 1, "Next: plains, world 1, waiting for the first action");
         Check(session.Banner.Shown && session.Banner.Text.StartsWith("Objective 1 of"), "the banner shows objective 1: " + session.Banner.Text);
+        var tasks = panel.GetComponent<StudyTasks>();
+        var missing = tasks.Missing();
+        Check(missing.Count == 0, "every objective's object is in the scene" + (missing.Count > 0 ? ": missing " + string.Join("; ", missing) : ""));
+        Check(tasks.MazeRouteCells == 52, $"the maze trail follows the 52-cell correct route (got {tasks.MazeRouteCells})");
+        Check(session.ObjectiveCount == 5, $"the plains have 5 objectives (got {session.ObjectiveCount})");
+        Check(GameObject.Find("Objective Marker/Pillar") != null && GameObject.Find("Objective Marker/Beacon") != null, "a plains objective has a pillar and a beacon");
         yield return 1f;
         Check(session.Now == StudySession.Phase.WorldReady && !File.Exists(Path.Combine(Folder, "p002-trad-plains.csv")), "no clock and no file before the first action");
 
@@ -139,7 +148,6 @@ public static class StudyFlowCheck
         yield return 1.3f; // at least one position row
         manual.SimulatedMove = null;
 
-        var tasks = panel.GetComponent<StudyTasks>();
         int count = session.ObjectiveCount;
         for (int i = 0; i < count; i++)
         {
@@ -170,15 +178,22 @@ public static class StudyFlowCheck
         manual.SimulatedMove = new Vector2(0f, 1f);
         yield return 0.3f;
         manual.SimulatedMove = null;
-        panel.PlaceAt(tasks.GoalOf(session.CurrentTask), 0f, "Maze", "flow check");
-        yield return 0.5f;
-        Check(session.Now == StudySession.Phase.WorldDone, "the maze exit completes the maze");
-        CheckWorldCsv(ReadCsv("p002-trad-maze-run2.csv"), "p002,trad,seq1,plains-maze-house,maze,2,2", 1, "completed");
+        int mazeCount = session.ObjectiveCount;
+        Check(mazeCount == 4, $"the maze has 3 checkpoints and the exit (got {mazeCount} objectives)");
+        Check(GameObject.Find("Objective Marker/Pillar") != null && GameObject.Find("Objective Marker/Beacon") == null, "a checkpoint has a pillar and no beacon");
+        for (int i = 0; i < mazeCount; i++)
+        {
+            panel.PlaceAt(tasks.GoalOf(session.CurrentTask), 0f, "Maze", "flow check");
+            yield return 0.3f;
+        }
+        Check(session.Now == StudySession.Phase.WorldDone, "the checkpoints and then the exit complete the maze");
+        CheckWorldCsv(ReadCsv("p002-trad-maze-run2.csv"), "p002,trad,seq1,plains-maze-house,maze,2,2", mazeCount, "completed");
 
-        // ---- House: every objective skipped
+        // ---- House: everything reached but the last objective, which is skipped
         session.Next();
         yield return 0.5f;
         Check(session.World == "House" && session.WorldPosition == 3, "Next: house, world 3");
+        Check(GameObject.Find("Objective Marker") == null, "the house shows no markers");
         session.Skip();
         Check(session.Now == StudySession.Phase.WorldReady, "Skip does nothing before the first action");
         manual.SimulatedTurn = new Vector2(-1f, 0f);
@@ -186,13 +201,26 @@ public static class StudyFlowCheck
         manual.SimulatedTurn = null;
         yield return 0.2f;
         int houseObjectives = session.ObjectiveCount;
-        for (int i = 0; i < houseObjectives; i++) session.Skip();
+        Check(houseObjectives == 10, $"the house has 10 objectives, 2 per room (got {houseObjectives})");
+        for (int i = 0; i < houseObjectives - 1; i++)
+        {
+            var task = session.CurrentTask;
+            Vector3 at = tasks.GoalOf(task);
+            // Rooms are entered facing south, away from the object the next "turn towards" is about.
+            float yaw = task.kind == GoalKind.Face && tasks.TryCentre(task, out Vector3 centre)
+                ? Mathf.Atan2(centre.x - at.x, centre.z - at.z) * Mathf.Rad2Deg
+                : task.kind == GoalKind.Room ? 180f : 0f;
+            panel.PlaceAt(at, yaw, "House", "flow check");
+            yield return task.kind == GoalKind.Face ? 0.9f : 0.3f; // a turn counts once held for half a second
+            Check(session.Objective == i + 2, $"house objective {i + 1} reached: {task.instruction}");
+        }
+        session.Skip();
         yield return 0.3f;
         Check(session.Now == StudySession.Phase.Finished, "the last world done: finished, the All done card");
         var house = ReadCsv("p002-trad-house.csv");
-        CheckWorldCsv(house, "p002,trad,seq1,plains-maze-house,house,3,1", -1, $"completed ({houseObjectives} skipped)");
+        CheckWorldCsv(house, "p002,trad,seq1,plains-maze-house,house,3,1", houseObjectives - 1, "completed (1 skipped)");
         Check(house.Count > 2 && house[2][9] == "turn" && house[2][11] == "left", "a right-stick turn is the first action: turn left");
-        Check(house.Count(r => r[9] == "objective_skipped") == houseObjectives, "each skipped objective is logged");
+        Check(house.Count(r => r[9] == "objective_skipped") == 1, "the skipped objective is logged");
 
         // ---- p002 again: nothing left to do
         session.EnterId("p002");

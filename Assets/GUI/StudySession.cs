@@ -92,7 +92,7 @@ public class StudySession : MonoBehaviour
         _panel = panel;
         _tasks = GetComponent<StudyTasks>();
         if (_tasks == null) _tasks = gameObject.AddComponent<StudyTasks>();
-        _tasks.UsePlaceholdersIfEmpty(panel);
+        _tasks.Setup(panel);
         _bridge = GetComponent<BridgeLink>();
         _menu = StudyMenu.Build(panel);
         _menu.OnIdConfirmed += EnterId;
@@ -163,9 +163,7 @@ public class StudySession : MonoBehaviour
     private bool Reached(StudyTask task)
     {
         Transform head = Camera.main != null ? Camera.main.transform : _panel.playerBody;
-        Vector3 to = _tasks.GoalOf(task) - head.position;
-        to.y = 0f;
-        return to.magnitude <= task.radius;
+        return _tasks.Reached(task, head);
     }
 
     // ---------------------------------------------------------------- the session's steps
@@ -180,7 +178,7 @@ public class StudySession : MonoBehaviour
         _worlds = new string[0];
         _worldIndex = -1;
         _banner.Hide();
-        _tasks.HidePad();
+        _tasks.HideGoal();
         if (_panel.tutorialCard != null) _panel.tutorialCard.Dismiss();
         _panel.PauseForBreak();
         _menu.Show();
@@ -240,7 +238,7 @@ public class StudySession : MonoBehaviour
 
         _menu.Hide();
         _banner.Hide();
-        _tasks.HidePad();
+        _tasks.HideGoal();
         _panel.ResetForParticipant();
         _panel.SetCondition(condition);
         _panel.GoToWorld("Practice", "study: practice");
@@ -296,9 +294,9 @@ public class StudySession : MonoBehaviour
     private void ShowObjective(bool flash)
     {
         var task = CurrentTask;
-        if (task == null) { _banner.Hide(); _tasks.HidePad(); return; }
+        if (task == null) { _banner.Hide(); _tasks.HideGoal(); return; }
         _banner.Show(Objective, ObjectiveCount, task.instruction, flash);
-        _tasks.ShowPad(task);
+        _tasks.ShowGoal(task);
     }
 
     // The current objective reached (or skipped by the researcher); the next one starts at once.
@@ -338,7 +336,7 @@ public class StudySession : MonoBehaviour
         Say($"{World}: {result}" + (wrote ? $" (saved {_log.FileName}, {_log.Rows} rows)" : " (nothing to save: no action)"));
         _log = null;
         _banner.Hide();
-        _tasks.HidePad();
+        _tasks.HideGoal();
         if (Now == Phase.WorldReady || Now == Phase.WorldRunning) Now = Phase.WorldDone;
     }
 
@@ -346,7 +344,7 @@ public class StudySession : MonoBehaviour
     {
         Now = Phase.Finished;
         _banner.Hide();
-        _tasks.HidePad();
+        _tasks.HideGoal();
         _panel.PauseForBreak();
         if (_panel.tutorialCard != null)
             _panel.tutorialCard.ShowMessage("All done", "Thank you for taking part!\nPlease take off the headset.", false);
@@ -379,7 +377,7 @@ public class StudySession : MonoBehaviour
         Id = "";
         IsPilot = false;
         _banner.Hide();
-        _tasks.HidePad();
+        _tasks.HideGoal();
     }
 
     private void Say(string message)
@@ -494,6 +492,6 @@ public class StudySession : MonoBehaviour
     private void OnDestroy()
     {
         _sync?.Dispose();
-        _tasks?.HidePad();
+        _tasks?.HideGoal();
     }
 }
