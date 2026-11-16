@@ -62,6 +62,22 @@ public class VRControlPanel : MonoBehaviour
     [Tooltip("The slight up-and-down of walking on step commands (\"take 3 steps\"): Off, Subtle (1.5 cm) or Strong (3 cm). " +
              "Other moves never bob.")]
     public StepBob.Strength stepBob = StepBob.Strength.Subtle;
+    [Tooltip("Metres in one step, for forward, back and sidesteps (\"take two steps\" = twice this when nothing's in the way). " +
+             "It still adapts a little to each person during a session.")]
+    [Range(0.5f, 1.5f)] public float stepMeters = 1f;
+
+    [Header("Comfort")]
+    [Tooltip("m/s² when movement speeds up (voice and sticks). Lower = gentler starts.")]
+    public float acceleration = 4f;
+    [Tooltip("m/s² when movement slows down at the end of a move or when a new command takes over.")]
+    public float deceleration = 5f;
+    [Tooltip("m/s² when a spoken \"stop\" (or \"wait\", \"freeze\") slows the player down: gentler, as a sudden stop is " +
+             "nauseating. Walls and the cancel button (B) still stop at once.")]
+    public float stopDeceleration = 3f;
+    [Tooltip("Turn in instant jumps instead of smooth eased turns (voice turns and the right stick).")]
+    public bool snapTurning;
+    [Tooltip("Also darken the edges of the view while walking forward or back (voice and sticks), not only while turning.")]
+    public bool movementVignette = true;
 
     [Header("Teleport Destinations")]
     public Transform practiceDestination; // the practice area (PLACEHOLDER), where a session starts
@@ -97,11 +113,15 @@ public class VRControlPanel : MonoBehaviour
     private StepBob _stepBob;  // in the LLM pipeline
     private ManualLocomotion _manual;      // the Manual condition's sticks; off in ROVR
     private ControllerButton _aButton;     // A: short press = mute / unmute, long press = show / hide the panel
+    private ControllerButton _bButton;     // B: cancel the command (ROVR)
+    private bool _cutByMute;               // the sentence being transcribed was ended by muting
+    private PlayerGravity _gravity;
     private bool _panelShown = true; // hidden at start (Start); A held shows it
+    private RawImage _panelDiagram;  // the controls diagram, just under the panel (shown and hidden with it)
     private bool _transcribing;
     private bool _speechStarted; // a sentence is being spoken (for the SPEECH transcript lines)
     private const float SlowWhisperSec = 3f; // "so far" transcriptions slower than this are logged
-    private int _speechGeneration; // bumped on mute/unmute so results from before are dropped
+    private int _speechGeneration; // bumped by Cancel so speech from before it is dropped (muting keeps it)
 
     private CharacterController _controller;
     private Vector3 _moveDirection = Vector3.zero;
@@ -144,8 +164,17 @@ public class VRControlPanel : MonoBehaviour
         // camera may not have registered yet during Awake.
         if (useLLM) SetUpLLMPipeline();
 
-        // The Maze minimap (corner of the view, only in the Maze), for both voice and fixed-phrase modes.
-        if (FindAnyObjectByType<MazeMinimap>() == null) gameObject.AddComponent<MazeMinimap>();
+        // The minimaps of the Maze and the House (lower left of the view when the world loads, grabbable),
+        // for both conditions.
+        if (FindAnyObjectByType<WorldMinimap>() == null) gameObject.AddComponent<WorldMinimap>();
+
+        // Hands drawn where the user's hands are (holding the controllers, or tracked hands without them).
+        if (FindAnyObjectByType<VirtualHands>() == null) gameObject.AddComponent<VirtualHands>();
+        // A brighter pointer ray, with a dot where it lands.
+        if (FindAnyObjectByType<PointerLook>() == null) gameObject.AddComponent<PointerLook>();
+
+        _gravity = playerBody.GetComponent<PlayerGravity>();
+        if (_gravity == null) _gravity = playerBody.gameObject.AddComponent<PlayerGravity>();
 
         // The Manual condition's stick movement, on the same body; only on in Manual (SetCondition).
         _manual = playerBody.GetComponent<ManualLocomotion>();
@@ -158,6 +187,15 @@ public class VRControlPanel : MonoBehaviour
         if (_aButton == null) _aButton = gameObject.AddComponent<ControllerButton>();
         _aButton.OnShortPress += OnAShortPress;
         _aButton.OnLongPress += TogglePanel;
+
+        // B on the right controller (F2 in the Editor): cancel the command. Separate from muting, which only
+        // stops listening and still carries out what was already said.
+        _bButton = gameObject.AddComponent<ControllerButton>();
+        _bButton.button = ControllerButton.Which.Secondary;
+        _bButton.OnShortPress += OnBPress;
+        _bButton.OnLongPress += OnBPress;
+
+        TurnOffRigLocomotion();
 
         // Keeps the body (and its collisions) under the user's head in the headset, and hides its capsule.
         _bodyUnderHead = playerBody.GetComponent<BodyUnderHead>();
@@ -225,6 +263,13 @@ public class VRControlPanel : MonoBehaviour
         // Without it the mic records silence, so nothing is ever transcribed. Ask once at start.
         RequestMicPermission();
 
+        // The controls diagram, as a second card just under the panel, so holding A also shows the controls.
+        // A child of the panel's canvas: shown, hidden and moved with it. SetCondition picks the image.
+        var panelRect = (RectTransform)transform;
+        float diagramWidth = Mathf.Min(640f, panelRect.rect.width);
+        _panelDiagram = ControlsDiagram.Attach(transform,
+            new Vector2(0f, -panelRect.rect.height / 2f - 14f - diagramWidth / ControlsDiagram.Aspect / 2f), diagramWidth);
+
         SetCondition(condition);
         ClearUI();
 
@@ -241,6 +286,7 @@ public class VRControlPanel : MonoBehaviour
     {
         if (_ollama != null) _ollama.LogExchanges = logLLM;
         if (_stepBob != null) _stepBob.level = stepBob;
+        ApplyComfort();
         HandleMicPermissionAnswer();
 
         // Handle Command Cooldown Timer
@@ -279,13 +325,16 @@ public class VRControlPanel : MonoBehaviour
     {
         // Stop any movement first, so it doesn't carry on in the new world.
         _moveTimer = 0f;
-        if (_resolver != null) _resolver.HaltNow();
+        if (_resolver != null) _resolver.HaltNow(true);
 
         // A live CharacterController can snap back to its old position, so pause it while moving.
         _controller.enabled = false;
         playerBody.position = position;
         playerBody.rotation = Quaternion.Euler(0f, targetYRotation, 0f);
         _controller.enabled = true;
+        if (_gravity != null) _gravity.Settle();
+        // The new world's walkable area, for "go to the table" round furniture and "get me out of this room".
+        RoutePlanner.Prepare(position, _controller.radius);
 
         // The head (not just the body) lands on the destination, facing targetYRotation, wherever the
         // user stands in their play area. (InputTracking.Recenter did this before OpenXR.)
@@ -325,9 +374,10 @@ public class VRControlPanel : MonoBehaviour
     // sticks are off and the mic is muted; SetCondition turns the sticks back on for the next world.
     public void PauseForBreak()
     {
-        if (_resolver != null) _resolver.HaltNow();
+        if (_resolver != null) _resolver.HaltNow(true);
         _moveTimer = 0f;
         if (_manual != null) _manual.enabled = false;
+        DropSpeech(); // nothing said before the break is carried out after it
         if (!_isMicMuted) ToggleMicMute();
     }
 
@@ -355,6 +405,7 @@ public class VRControlPanel : MonoBehaviour
     public void ResetForParticipant()
     {
         if (_resolver != null) _resolver.ResetSession();
+        DropSpeech();
         if (!_isMicMuted) ToggleMicMute();
     }
 
@@ -377,16 +428,23 @@ public class VRControlPanel : MonoBehaviour
 
         _isMicMuted = !_isMicMuted;
         Record("BUTTON", _isMicMuted ? "Mute (mic off)" : "Unmute (mic on)");
-        // A sentence cut off by muting must not carry over, and late transcriptions are dropped.
-        _speechGeneration++;
-        _pendingSentences.Clear();
+        // Muting only stops listening. What was already said is still carried out: a sentence in progress
+        // ends here (as if the speaker had paused) and goes on to Whisper, and anything already with
+        // Whisper or the LLM finishes. Only Cancel (B) throws speech away.
         _pendingPartial = null;
-        _segmenter?.Reset();
 
         if (_isMicMuted)
         {
             // Muted state
-            if (_transcribing) Record("MIC", "Muted while Whisper was still working: its result will be dropped");
+            bool working = _transcribing || _pendingSentences.Count > 0 || (_resolver != null && _resolver.IsThinking);
+            if (_segmenter != null && _segmenter.InSentence)
+            {
+                _cutByMute = true;
+                if (_segmenter.Flush()) Record("MIC", "Muted mid-sentence: what was said so far is still transcribed and carried out");
+                else _cutByMute = false;
+            }
+            else _segmenter?.Reset(); // nothing being said: drop the few silent frames kept before speech
+            if (working) Record("MIC", "Muted while a command was still being worked on: it carries on");
             _speechStarted = false;
             if (microphoneRecord.IsRecording) microphoneRecord.StopRecord();
             microphoneRecord.enabled = false;
@@ -394,7 +452,8 @@ public class VRControlPanel : MonoBehaviour
             if (micButtonText != null) micButtonText.text = "Unmute";
             ShowMic();
             Debug.Log("<color=yellow><b>[Mic Muted]</b> Speech recognition paused.</color>");
-            ClearUI();
+            if (working || _cutByMute) SetOutputFeedback(StillWorking, Color.white);
+            else ClearUI();
         }
         else
         {
@@ -606,16 +665,26 @@ public class VRControlPanel : MonoBehaviour
             float whisperSeconds = Time.realtimeSinceStartup - whisperStarted;
 
             // Say why a transcription isn't used, and flag slow ones, so the transcript shows what Whisper did.
-            if (generation != _speechGeneration || _isMicMuted)
+            if (generation != _speechGeneration)
             {
-                Record("DROPPED", $"{piece} \"{(text ?? "").Trim()}\": finished {whisperSeconds:F1} s after it started, but the mic was muted in between");
+                Record("DROPPED", $"{piece} \"{(text ?? "").Trim()}\": finished {whisperSeconds:F1} s after it started, but the command was cancelled in between");
                 continue;
             }
+            if (!isSentence && _isMicMuted) continue; // a live caption for speech that has ended: nothing to show
             if (!isSentence && whisperSeconds > SlowWhisperSec)
                 Record("WHISPER", $"Slow: a {Seconds(audio):F1} s so-far piece took {whisperSeconds:F1} s {where} (\"{(text ?? "").Trim()}\")");
 
             if (logSpeech) Debug.Log("[Speech] " + (isSentence ? "sentence" : "so far") + " (" + Seconds(audio).ToString("F1") + " s, " + where + "): \"" + text + "\"");
-            if (isSentence) OnSentenceHeard(text, Seconds(audio), whisperSeconds, where);
+            if (isSentence)
+            {
+                // The last sentence before muting may be cut off: the LLM is told, so it asks rather than guesses.
+                if (_cutByMute && _pendingSentences.Count == 0)
+                {
+                    _cutByMute = false;
+                    if (_resolver != null) _resolver.NextIsCutOff = true;
+                }
+                OnSentenceHeard(text, Seconds(audio), whisperSeconds, where);
+            }
             else OnPartialHeard(text);
         }
         _transcribing = false;
@@ -685,6 +754,9 @@ public class VRControlPanel : MonoBehaviour
             Debug.Log($"<color=green><b>[Subtitles Updated]:</b> {spokenText}</color>");
         }
 
+        // What was finished off by muting turned out to be nothing (silence, "uh"): don't leave "still working" up.
+        if (spokenText == null && outputText != null && outputText.text == StillWorking) ClearUI();
+
         if (useLLM)
         {
             if (_resolver == null) SetUpLLMPipeline(); // switched on during Play
@@ -712,7 +784,7 @@ public class VRControlPanel : MonoBehaviour
         _ollama.OnLatency += seconds => Record("LLM", "Answered in " + seconds.ToString("F2") + " s");
         _resolver = GetOrAdd<SemanticIntentResolver>();
         GetOrAdd<Highlighter>(); // makes the options glow when the system asks "which one?"
-        GetOrAdd<ComfortVignette>(); // darkens the edges of the view while turning
+        _vignette = GetOrAdd<ComfortVignette>(); // darkens the edges of the view while turning
         _stepBob = GetOrAdd<StepBob>(); // the slight up-and-down of walking, for step commands
 
         _resolver.OnCommandResolved += HandleCommandResolved;
@@ -759,11 +831,25 @@ public class VRControlPanel : MonoBehaviour
     public void SetCondition(StudyCondition next)
     {
         condition = next;
-        if (_resolver != null) _resolver.HaltNow();
+        if (_resolver != null) _resolver.HaltNow(true);
         if (_manual != null) _manual.enabled = next == StudyCondition.Manual;
-        if (next == StudyCondition.Manual && !_isMicMuted) ToggleMicMute();
+        if (next == StudyCondition.Manual) { DropSpeech(); if (!_isMicMuted) ToggleMicMute(); }
         if (micMuteButton != null) micMuteButton.interactable = next == StudyCondition.ROVR;
+        ControlsDiagram.Show(_panelDiagram, next);
         Record("SESSION", "Condition: " + (next == StudyCondition.ROVR ? "ROVR (voice)" : "Manual (controller)"));
+    }
+
+    // The XR rig (XRI Starter Assets) comes with its own stick controls. Its Locomotion object is off in
+    // the scene, but on the right controller pushing the stick forward still brought up the teleport arc and
+    // took the UI pointer away from that hand, while nothing teleported. "Smooth motion" turns the rig's
+    // teleport and turn inputs off for good; the move input it enables drives nothing, as its provider is
+    // in the switched-off Locomotion object. Only ManualLocomotion (Manual) moves with the sticks.
+    private void TurnOffRigLocomotion()
+    {
+        var managers = FindObjectsByType<UnityEngine.XR.Interaction.Toolkit.Samples.StarterAssets.ControllerInputActionManager>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var manager in managers) manager.smoothMotionEnabled = true;
+        if (managers.Length > 0) Record("SESSION", "Rig stick controls (teleport, turn) off on " + managers.Length + " controller(s)");
     }
 
     private void OnAShortPress()
@@ -782,6 +868,7 @@ public class VRControlPanel : MonoBehaviour
     }
 
     public bool PanelShown => _panelShown;
+    public bool MicMuted => _isMicMuted;
     public bool CardShown => tutorialCard != null && tutorialCard.Shown;
 
     private void TogglePanel() => SetPanelShown(!_panelShown, true);
@@ -814,9 +901,77 @@ public class VRControlPanel : MonoBehaviour
         if (sprite != null) micIcon.sprite = sprite;
     }
 
+    // ---------- Cancel (B) ----------
+
+    private const string Working = "Working on it...";
+    private const string StillWorking = "Mic off. Still working on what you said...";
+
+    // B: the command is cancelled. Movement stops at once, speech not yet acted on is thrown away (the
+    // sentence being spoken, anything with Whisper or the LLM), and any question is dropped. The mic stays
+    // as it is: muting is a separate thing.
+    private void OnBPress()
+    {
+        if (CardShown || condition != StudyCondition.ROVR) return;
+        Record("BUTTON", "B: cancel the command");
+        CancelCommand();
+    }
+
+    public void CancelCommand()
+    {
+        DropSpeech();
+        if (_resolver != null) _resolver.CancelCommand();
+        _moveTimer = 0f;
+        SetOutputFeedback("Cancelled", Color.white);
+        _session?.Note("cancel", "", "cancel button", "cancelled");
+    }
+
+    // Throws away speech not yet acted on: what's being said, and what's waiting for or with Whisper.
+    private void DropSpeech()
+    {
+        _speechGeneration++;
+        _pendingSentences.Clear();
+        _pendingPartial = null;
+        _segmenter?.Reset();
+        _speechStarted = false;
+        _cutByMute = false;
+        if (_resolver != null) _resolver.NextIsCutOff = false;
+    }
+
+    // The Comfort settings, on whatever moves the body (they can be changed during Play).
+    private void ApplyComfort()
+    {
+        if (_navigation != null)
+        {
+            _navigation.acceleration = acceleration;
+            _navigation.deceleration = deceleration;
+            _navigation.stopDeceleration = stopDeceleration;
+            _navigation.snapTurning = snapTurning;
+        }
+        if (_manual != null)
+        {
+            _manual.acceleration = acceleration * 1.5f; // the stick asks for speed directly: a little snappier
+            _manual.deceleration = deceleration * 1.6f;
+            _manual.snapTurning = snapTurning;
+        }
+        if (_vignette != null) _vignette.duringMovement = movementVignette;
+        if (_resolver != null && !Mathf.Approximately(_resolver.StepMeters, stepMeters)) _resolver.StepMeters = stepMeters;
+    }
+
+    private ComfortVignette _vignette;
+
+    // A halt word, heard while the sentence was still being spoken: stop, and end the sentence right there.
+    // The rest of what was being said, and anything still waiting for Whisper, is dropped (the halt wins), so
+    // what the user says next is a new sentence of its own: a follow-up command, not part of the "stop".
     private void HaltFromVoice()
     {
-        Record("HALT", "Halt word heard while speaking");
+        _speechGeneration++;
+        _pendingSentences.Clear();
+        _pendingPartial = null;
+        _segmenter?.Reset();
+        _speechStarted = false;
+        _cutByMute = false;
+        _router?.EndSentence();
+        Record("HALT", "Halt word heard while speaking: stopping, and the sentence ends here");
         _session?.Note("halt", "", "halt word while speaking", "stopped");
         _resolver.HaltNow();
         SetOutputFeedback("Stopped", true);
@@ -828,7 +983,7 @@ public class VRControlPanel : MonoBehaviour
         if (interrupt.isHalt && string.IsNullOrEmpty(interrupt.remainder))
             SetOutputFeedback("Stopped", true);
         else
-            SetOutputFeedback("...", Color.white); // waiting on the LLM
+            SetOutputFeedback(Working, Color.white); // heard, being worked out
 
         _resolver.SubmitUtterance(sentence);
     }
@@ -837,7 +992,10 @@ public class VRControlPanel : MonoBehaviour
     {
         if (command.IsClarification) return;
         string description = Describe(command);
-        SetOutputFeedback(description, true);
+        // Understood and started; a command still running is interrupted by it (and not resumed).
+        bool interrupting = _navigation != null && _navigation.IsBusy;
+        if (interrupting) Record("COMMAND", "Interrupts the running command");
+        SetOutputFeedback((interrupting ? "Switching: " : "") + description, true);
         _session?.Note("command", "", description, "");
 
         // Steps are the user's own (learned) length: the transcript says how far that was.
@@ -865,6 +1023,11 @@ public class VRControlPanel : MonoBehaviour
     {
         string result = outcome == CommandOutcome.NotFound ? "not found" : outcome.ToString().ToLowerInvariant();
         _session?.Note("move_end", "", command != null ? Describe(command) : "", result);
+        // Completed: say so, unless something newer is already on the line (a question, the next command).
+        if (outcome != CommandOutcome.Completed || command == null || outputText == null) return;
+        string description = Describe(command);
+        if (outputText.text.EndsWith(description))
+            SetOutputFeedback("Done: " + char.ToLower(description[0]) + description.Substring(1), true);
     }
 
     private void HandleError(string error)
@@ -919,6 +1082,9 @@ public class VRControlPanel : MonoBehaviour
                     break;
                 case ActionType.Stop:
                     parts.Add("stopping");
+                    break;
+                case ActionType.GoTo:
+                    parts.Add("going there");
                     break;
             }
         }
@@ -985,7 +1151,7 @@ public class VRControlPanel : MonoBehaviour
 
     private void SetOutputFeedback(string message, Color color)
     {
-        if (message != "...") Record("PANEL", message); // "..." is just "waiting on the LLM"
+        if (message != Working) Record("PANEL", message); // just "waiting on the LLM"
         if (outputText != null)
         {
             outputText.text = message;
@@ -1026,6 +1192,7 @@ public class VRControlPanel : MonoBehaviour
         _transcript = null;
         if (_bridge != null) _bridge.OnChanged -= OnBridgeChanged;
         if (_aButton != null) { _aButton.OnShortPress -= OnAShortPress; _aButton.OnLongPress -= TogglePanel; }
+        if (_bButton != null) { _bButton.OnShortPress -= OnBPress; _bButton.OnLongPress -= OnBPress; }
 
         if (_resolver != null)
         {

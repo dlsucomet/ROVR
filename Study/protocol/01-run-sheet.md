@@ -8,8 +8,8 @@ The step-by-step plan for one session, with what the researchers say. The same f
 
 **The objectives, per world** (they appear one at a time at the top of the participant's view):
 
-- **Plains:** five landmarks, one in each part of the field. The current one has a yellow pillar beside it with a beacon of light above it. *Go to the tree* → *Go to the pond under the beacon* → *Go to the rock under the beacon* → *Go to the pond under the beacon* → *Go to the rock under the beacon*. Reached within 1.5 m.
-- **Maze:** a glowing trail on the ground follows the correct route. *Follow the trail to checkpoint 1*, *2* and *3* (yellow pillars, about a quarter, half and three quarters of the way), then *Follow the trail to the exit*.
+- **Plains:** five landmarks, one in each part of the field. The current one has a beacon beside it: a column of see-through yellow light rising from the ground. *Go to the tree* → *Go to the pond under the beacon* → *Go to the rock under the beacon* → *Go to the pond under the beacon* → *Go to the rock under the beacon*. Reached within 1.5 m.
+- **Maze:** a simpler maze since Miguel's test (8 x 6 cells of 5 m, one 19-cell route, three short dead ends). A glowing trail on the ground follows the route, past a red flag (turn left there), a blue lamp (the corridor jogs right: a sidestep) and a white statue. *Go to the yellow marker (follow the trail)*, then *Go to the next yellow marker* twice (about a quarter, half and three quarters of the way), then *Go to the exit, under the yellow beacon*.
 - **House:** two objectives per room, no markers: *Go to the TV in the living room* → *Go to the bookshelf in the living room* → *Go to the fridge in the kitchen* → *Go to the dining table* → *Go to the desk in the bedroom* → *Go to the bed* → *Go into the bedroom bathroom* → *Turn towards the shower* → *Go into the guest bathroom* → *Turn towards the toilet*. Furniture is reached within 1 m; a room once past its doorway; a turn once facing the object (within 15°) for half a second.
 
 ## Roles
@@ -54,10 +54,10 @@ With four researchers, the fourth can greet the next participant or take over a 
 
 ### 2. Practice (about 5 min, not logged)
 
-The tutorial card for their condition is in view (a placeholder for now). Read the instructions for their condition, then ask them to press **A** to close the card. Let them try the practice area (a tree, a rock, a chair and a plant) until they're comfortable, up to about 5 minutes.
+The tutorial card for their condition is in view, with its controls diagram (the same diagram shows under the panel when **A** is held). Read the instructions for their condition, then ask them to press **A** to close the card. Let them try the practice area (a tree, a rock, a chair and a plant) until they're comfortable, up to about 5 minutes.
 
 **ROVR (voice):**
-> "You move by speaking. Say what you want to do in your own words, for example 'move forward five meters', 'turn left', or 'go to the tree'. The microphone starts off: press **A** on the controller to turn it on, and again to turn it off. It also turns off during each break, so press **A** again at the start of each world. The microphone icon at the bottom of your view has a slash through it while it's off, and next to it you'll see what the system heard. Say **'stop'** at any time to stop immediately, or **'go back'** to undo your last move. If something goes wrong, just say it a different way. You can also ask to go faster or slower. Apart from the A button, please don't use the controller."
+> "You move by speaking. The main moves are: 'move forward', 'take two steps forward', 'step left' or 'step right', which moves you sideways without turning, and 'turn right' or 'turn left', with an angle if you like, such as 'turn right 90 degrees'. Forward is always the way you're facing when you speak. You can also say 'go to the tree' and it takes you there and stops just in front of it. A new command takes over straight away, even while you're still moving. The microphone starts off: press **A** on the controller to turn it on, and again to turn it off. Turning it off only stops listening: if you've just said something, it still does it. It also turns off during each break, so press **A** again at the start of each world. Under the microphone icon at the bottom of your view it says MIC ON or MIC OFF, and next to it you'll see what the system heard and what it's doing. Say **'stop'** at any time to stop, or press **B** to cancel a command completely. Say **'go back'** to undo your last move. If something goes wrong, just say it a different way. You can also ask to go faster or slower. Apart from the A and B buttons, please don't use the controller."
 
 **Traditional (controller):**
 > "You move with the controllers. Push the left stick to move: the further you push it, the faster you go. The right stick turns; the edges of your view darken a little while you turn, which helps with comfort. While you move, please think aloud: say what you're thinking, what you're looking for and what you're about to do, just like talking to yourself."
@@ -73,7 +73,7 @@ Questions are fine during practice. When they're comfortable, the operator press
 The control page shows which world is next. Read that world's introduction:
 
 - **Plains:** *"This is an open plain. Your objectives appear at the top of your view, and each place you need to go is marked by a yellow beacon. Take your time to read each one."*
-- **Maze:** *"In this world you start at the entrance of a maze. Follow the glowing trail on the ground: it leads past three checkpoints, marked by yellow pillars, to the exit. There's a small map in the corner of your view that you can use."*
+- **Maze:** *"In this world you start at the entrance of a maze. Follow the glowing trail on the ground: it leads past three yellow markers to the exit, under a yellow beacon. There's a small map low on your left: it shows where you are and the next marker, and you can grab it with the grip button and move it wherever you like."*
 - **House:** *"This is a house. Your objectives take you through its rooms in order, two in each room. They appear at the top of your view."*
 
 Then:

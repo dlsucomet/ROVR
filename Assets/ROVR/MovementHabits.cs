@@ -1,6 +1,7 @@
 // Assets/ROVR/MovementHabits.cs
-// How far "a bit" and a step are. "A bit" starts at 0.5 m and a step at 0.7 m (a typical walking
-// step), and both adapt to the person: the LLM only labels a move as "small" or as a number of steps,
+// How far "a bit" and a step are. "A bit" starts at 0.5 m and a step at 1 m (the experimenter can set the
+// step on SemanticIntentResolver: 0.7 m, a real walking step, felt too small in the 4 m maze corridors and
+// the house at Miguel's test), and both adapt to the person: the LLM only labels a move as "small" or as a number of steps,
 // and the engine turns that into metres from these values (the model never does geometry).
 //
 //   - Nudge again the same way soon after a "small" move ("a bit forward... a bit more") -> the bit
@@ -24,14 +25,18 @@ namespace ROVR
         const float GrowFactor = 1.15f;
         const float ShrinkFactor = 0.85f;
 
-        public const float DefaultStepMeters = 0.7f;
-        public const float MinStepMeters = 0.4f;
-        public const float MaxStepMeters = 1f;
+        public const float DefaultStepMeters = 1f;
+        public const float MinStepMeters = 0.5f;
+        public const float MaxStepMeters = 1.5f;
+
+        // Where a step starts (and returns to on Reset), within Min and Max.
+        public float DefaultStep { get => _defaultStep; set => _defaultStep = Math.Max(MinStepMeters, Math.Min(MaxStepMeters, value)); }
+        float _defaultStep = DefaultStepMeters;
 
         public float BitMeters { get; private set; } = DefaultBitMeters;
         public float StepMeters { get; private set; } = DefaultStepMeters;
 
-        public void Reset() { BitMeters = DefaultBitMeters; StepMeters = DefaultStepMeters; }
+        public void Reset() { BitMeters = DefaultBitMeters; StepMeters = _defaultStep; }
 
         // `last` is the previous executed command and `lastOutcome` how it ended; `secondsSinceLast`
         // is how long ago it started. Only a cleanly completed "small" move or counted steps count as evidence.

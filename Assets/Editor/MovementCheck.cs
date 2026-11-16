@@ -1,0 +1,270 @@
+// Assets/Editor/MovementCheck.cs
+// Menu: Tools > ROVR > Check Movement. Or headless:
+//   Unity -batchmode -projectPath . -executeMethod MovementCheck.RunBatch -logFile -
+// Plays main.unity and drives the real voice pipeline and body with the commands from Miguel's test session,
+// without the LLM (only the quick commands, which don't need it) or a headset:
+//   - gravity: standing on the floor after a teleport and after a jump;
+//   - "take two steps forward" = twice the step length, stepping the whole way (slower at each footfall,
+//     never a stop, starting and ending at rest);
+//   - "step left" is a sidestep: sideways, the view doesn't turn;
+//   - "keep moving forward" interrupted by "turn right": the move reports Interrupted, eases out briefly, and
+//     the turn runs (90 degrees);
+//   - the edges of the view darken while walking forward or back, not for sidesteps;
+//   - "stop" and "freeze" ease to a stop (never dead); the cancel button (B) stops at once;
+//   - steps into a hedge stop at it (Blocked), never through it;
+//   - the minimap: the Maze's and the House's, low on the left of the view;
+//   - "get me out of this room" from the living room ends in the hall; a route to the bed goes through doorways.
+// Results: the Console, and Logs/MovementCheck/results.txt. RunBatch quits with 0 if everything passed, 1 if not.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using ROVR;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+[InitializeOnLoad]
+public static class MovementCheck
+{
+    const string RunningKey = "ROVR.MovementCheck.Running", BatchKey = "ROVR.MovementCheck.Batch";
+
+    static IEnumerator<float> _steps;
+    static float _resumeAt;
+    static readonly List<string> _results = new List<string>();
+    static int _failures;
+
+    static string Folder => Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs", "MovementCheck");
+
+    static MovementCheck()
+    {
+        EditorApplication.playModeStateChanged += OnPlayMode;
+    }
+
+    [MenuItem("Tools/ROVR/Check Movement")]
+    public static void Run() => Start(false);
+
+    public static void RunBatch() => Start(true);
+
+    static void Start(bool batch)
+    {
+        Directory.CreateDirectory(Folder);
+        SessionState.SetBool(RunningKey, true);
+        SessionState.SetBool(BatchKey, batch);
+        EditorSceneManager.OpenScene("Assets/main.unity");
+        EditorApplication.isPlaying = true;
+    }
+
+    static void OnPlayMode(PlayModeStateChange change)
+    {
+        if (!SessionState.GetBool(RunningKey, false)) return;
+        if (change == PlayModeStateChange.EnteredPlayMode)
+        {
+            _results.Clear();
+            _failures = 0;
+            _steps = Steps();
+            _resumeAt = 0f;
+            EditorApplication.update += Tick;
+        }
+        else if (change == PlayModeStateChange.EnteredEditMode)
+        {
+            SessionState.EraseBool(RunningKey);
+            if (SessionState.GetBool(BatchKey, false)) EditorApplication.Exit(File.ReadAllText(Path.Combine(Folder, "results.txt")).Contains("ALL PASSED") ? 0 : 1);
+        }
+    }
+
+    static void Tick()
+    {
+        if (!EditorApplication.isPlaying || _steps == null) return;
+        if (Time.realtimeSinceStartup < _resumeAt) return;
+        bool more;
+        try { more = _steps.MoveNext(); }
+        catch (Exception e) { Check(false, "exception: " + e); more = false; }
+        if (more) { _resumeAt = Time.realtimeSinceStartup + _steps.Current; return; }
+
+        EditorApplication.update -= Tick;
+        _steps = null;
+        string summary = _failures == 0 ? "ALL PASSED (" + _results.Count + " checks)" : _failures + " FAILED of " + _results.Count;
+        _results.Add(summary);
+        File.WriteAllLines(Path.Combine(Folder, "results.txt"), _results);
+        Debug.Log("[MovementCheck] " + summary + "\n" + string.Join("\n", _results));
+        EditorApplication.isPlaying = false;
+    }
+
+    static void Check(bool ok, string what)
+    {
+        _results.Add((ok ? "ok    " : "FAIL  ") + what);
+        if (!ok) { _failures++; Debug.LogError("[MovementCheck] FAIL " + what); }
+    }
+
+    static Vector3 Flat(Vector3 v) { v.y = 0f; return v; }
+
+    static float Yaw(Transform head)
+    {
+        Vector3 f = Flat(head.forward);
+        return Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+    }
+
+    // ------------------------------------------------------------------ the checks
+
+    static IEnumerator<float> Steps()
+    {
+        yield return 2f;
+        var panel = UnityEngine.Object.FindAnyObjectByType<VRControlPanel>();
+        Check(panel != null, "the panel exists");
+        if (panel == null) yield break;
+        var body = panel.playerBody;
+        var nav = body.GetComponent<NavigationController>();
+        var resolver = body.GetComponent<SemanticIntentResolver>();
+        var gravity = body.GetComponent<PlayerGravity>();
+        var map = UnityEngine.Object.FindAnyObjectByType<WorldMinimap>();
+        var vignette = body.GetComponent<ComfortVignette>();
+        var head = Camera.main.transform;
+        Check(nav != null && resolver != null && gravity != null && map != null, "navigation, resolver, gravity and the minimap are there");
+        if (nav == null || resolver == null || gravity == null) yield break;
+        if (panel.tutorialCard != null) panel.tutorialCard.Dismiss();
+
+        // ---- Words: expressions aren't commands; after "stop", a follow-up is its own command
+        foreach (var said in new[] { "Okay.", "OK", "Alright.", "All right", "Yeah, okay.", "Got it.", "Uh, okay" })
+            Check(TranscriptFilter.Clean(said) == null, $"\"{said}\" is ignored as an expression");
+        Check(TranscriptFilter.Clean("Okay, turn left.") != null, "\"Okay, turn left\" still goes through");
+        var follow = InterruptModule.Evaluate("Stop, turn left.");
+        Check(follow.isHalt && follow.remainder == "turn left", $"\"stop, turn left\" stops, then turns left (remainder \"{follow.remainder}\")");
+        foreach (var said in new[] { "Stop moving.", "Stop it.", "Wait a bit.", "Hold on a second." })
+        {
+            var r = InterruptModule.Evaluate(said);
+            Check(r.isHalt && r.remainder.Length == 0, $"\"{said}\" only stops (remainder \"{r.remainder}\")");
+        }
+
+        CommandOutcome? last = null;
+        var outcomes = new List<CommandOutcome>();
+        nav.OnCommandFinished += (c, o) => { last = o; outcomes.Add(o); };
+
+        // ---- Gravity
+        panel.GoToWorld("Plain", "movement check");
+        yield return 1.5f;
+        float floor = GameObject.Find("Plain").transform.position.y;
+        Check(gravity.IsGrounded && Mathf.Abs(body.position.y - floor) < 0.1f, $"on the Plain floor after the teleport (y {body.position.y:F2}, grounded {gravity.IsGrounded})");
+
+        // ---- Two steps forward
+        float step = resolver.StepMeters;
+        Vector3 from = body.position;
+        float yaw0 = Yaw(head);
+        resolver.SubmitUtterance("take two steps forward");
+        yield return 0.1f;
+        float early = nav.SpeedNow;
+        float top = 0f;
+        var speeds = new List<float>();
+        for (int i = 0; i < 400 && nav.IsBusy; i++) { top = Mathf.Max(top, nav.SpeedNow); speeds.Add(nav.SpeedNow); yield return 0.01f; }
+        // Between the two strides the speed dips (the footfall) and rises again: two peaks, a dip, never zero.
+        int peaks = 0;
+        float dip = float.MaxValue;
+        for (int i = 2; i + 2 < speeds.Count; i++)
+        {
+            if (speeds[i] > speeds[i - 2] && speeds[i] >= speeds[i + 2] && speeds[i] > 0.7f * top && (peaks == 0 || dip < 0.75f * top)) { peaks++; dip = float.MaxValue; }
+            else if (peaks == 1) dip = Mathf.Min(dip, speeds[i]);
+        }
+        Check(peaks == 2, $"two strides: the speed peaks once per step ({peaks} peaks in {speeds.Count} samples, top {top:F2} m/s)");
+        float moved = Flat(body.position - from).magnitude;
+        Check(Mathf.Abs(moved - 2f * step) < 0.12f, $"\"take two steps forward\" = 2 x {step:F2} m (moved {moved:F2} m)");
+        Check(early < top - 0.2f, $"it eases in (speed {early:F2} m/s early, top {top:F2} m/s)");
+        Check(last == CommandOutcome.Completed, "and completes (" + last + ")");
+
+        // ---- A sidestep (after the forward walk's vignette has faded)
+        yield return 0.4f;
+        from = body.position;
+        Vector3 forward = Flat(head.forward).normalized;
+        resolver.SubmitUtterance("step left");
+        float sideDark = 0f;
+        for (int i = 0; i < 60 && (nav.IsBusy || i == 0); i++) { if (vignette != null) sideDark = Mathf.Max(sideDark, vignette.Amount); yield return 0.05f; }
+        Vector3 d = Flat(body.position - from);
+        Check(Mathf.Abs(d.magnitude - step) < 0.1f && Mathf.Abs(Vector3.Dot(d.normalized, forward)) < 0.1f && Vector3.Cross(forward, d).y < 0f,
+            $"\"step left\" moves {step:F2} m to the left, not forward (moved {d.magnitude:F2} m, along forward {Vector3.Dot(d, forward):F2})");
+        Check(Mathf.Abs(Mathf.DeltaAngle(yaw0, Yaw(head))) < 1f, "and the view doesn't turn");
+        Check(sideDark < 0.01f, $"a sidestep doesn't darken the edges of the view (vignette {sideDark:F2})");
+
+        // ---- Interrupt a continuous move with a turn
+        resolver.SubmitUtterance("keep moving forward");
+        yield return 1.2f;
+        Check(nav.IsBusy && nav.SpeedNow > 1.5f, $"\"keep moving forward\" is moving ({nav.SpeedNow:F2} m/s)");
+        Check(vignette != null && vignette.Amount > 0.3f, $"walking forward darkens the edges of the view (vignette {(vignette != null ? vignette.Amount : 0f):F2})");
+        outcomes.Clear();
+        Vector3 atTurn = body.position;
+        float yawBefore = Yaw(head);
+        resolver.SubmitUtterance("turn right");
+        yield return 0.05f;
+        Check(outcomes.Count > 0 && outcomes[0] == CommandOutcome.Interrupted, "\"turn right\" interrupts it at once (" + (outcomes.Count > 0 ? outcomes[0].ToString() : "nothing") + ")");
+        for (int i = 0; i < 80 && nav.IsBusy; i++) yield return 0.05f;
+        float coast = Flat(body.position - atTurn).magnitude;
+        Check(coast > 0.02f && coast < 0.7f, $"the move eases out over a short distance ({coast:F2} m), not a dead stop");
+        Check(Mathf.Abs(Mathf.DeltaAngle(yawBefore, Yaw(head)) - 90f) < 3f, $"then turns right 90 degrees ({Mathf.DeltaAngle(yawBefore, Yaw(head)):F1})");
+        Check(last == CommandOutcome.Completed && !nav.IsBusy, "and nothing resumes the old move");
+
+        // ---- "Stop" eases; B stops at once
+        resolver.SubmitUtterance("move forward");
+        yield return 1.2f;
+        float before = nav.SpeedNow;
+        resolver.SubmitUtterance("stop");
+        yield return 0.05f;
+        float after = nav.SpeedNow;
+        Check(after > 0.05f && after < before, $"\"stop\" eases down ({before:F2} -> {after:F2} m/s after 50 ms)");
+        yield return 0.1f;
+        Check(nav.SpeedNow > 0.05f, $"still easing 150 ms after \"stop\" ({nav.SpeedNow:F2} m/s), not stopped dead");
+        yield return 0.8f;
+        Check(nav.SpeedNow < 0.01f, "and is stopped within a second");
+        resolver.SubmitUtterance("move forward");
+        yield return 1.2f;
+        resolver.SubmitUtterance("freeze");
+        yield return 0.1f;
+        Check(nav.SpeedNow > 0.3f, $"\"freeze\" eases down too ({nav.SpeedNow:F2} m/s after 100 ms)");
+        yield return 1f;
+        Check(nav.SpeedNow < 0.01f, "and stops");
+        resolver.SubmitUtterance("move forward");
+        yield return 1.2f;
+        panel.CancelCommand();
+        Check(nav.SpeedNow == 0f && !nav.IsBusy, "the cancel button stops at once");
+
+        // ---- Jump and land
+        nav.Execute(new NavigationCommand { steps = new[] { new NavigationStep { action = ActionType.Move, direction = DirectionType.Up, condition = "" } } });
+        yield return 0.2f;
+        Check(body.position.y > floor + 0.1f, $"\"up\" jumps (y {body.position.y:F2})");
+        yield return 1.5f;
+        Check(gravity.IsGrounded && Mathf.Abs(body.position.y - floor) < 0.1f, $"and lands back on the floor (y {body.position.y:F2})");
+
+        // ---- The Maze: minimap, and steps into a hedge stop at it
+        panel.GoToWorld("Maze", "movement check");
+        yield return 1.5f;
+        Check(map != null && map.IsShowing && map.ShownWorld == "Maze", "the Maze's minimap shows in the Maze");
+        if (map != null)
+        {
+            var m = GameObject.Find("World Minimap");
+            Vector3 local = m != null ? Quaternion.Euler(0f, -Yaw(head), 0f) * (m.transform.position - head.position) : Vector3.zero;
+            Check(m != null && local.x < -0.05f && local.y < -0.05f && local.z > 0.3f, $"low on the left, in front ({local.x:F2}, {local.y:F2}, {local.z:F2})");
+        }
+        var maze = GameObject.Find("Maze").transform;
+        resolver.SubmitUtterance("move forward 4 meters"); // into the entrance corridor
+        for (int i = 0; i < 80 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        resolver.SubmitUtterance("take 12 steps left");
+        for (int i = 0; i < 200 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        Vector3 inMaze = maze.InverseTransformPoint(body.position);
+        Check(last == CommandOutcome.Blocked, "12 steps into the hedge end Blocked (" + last + ")");
+        Check(inMaze.z > 0.3f && inMaze.z < MazeTrail.CellSize, $"and the body stops at the hedge, inside the corridor (z {inMaze.z:F2} m)");
+
+        // ---- The House: minimap, way out of a room, route through doorways
+        panel.GoToWorld("House", "movement check");
+        yield return 2f;
+        Check(map != null && map.IsShowing && map.ShownWorld == "House", "the House's minimap shows in the House");
+        var house = GameObject.Find("House").transform;
+        panel.PlaceAt(house.TransformPoint(new Vector3(4.5f, 0f, 4f)), 90f, "House", "movement check");
+        yield return 1f;
+        Check(HouseRooms.RoomAt(head.position) == "living room", "placed in the living room (" + HouseRooms.RoomAt(head.position) + ")");
+        resolver.SubmitUtterance("get me out of this room");
+        for (int i = 0; i < 400 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        Check(HouseRooms.RoomAt(body.position) == "hall" && last == CommandOutcome.Completed,
+            "\"get me out of this room\" ends in the hall (" + HouseRooms.RoomAt(body.position) + ", " + last + ")");
+        var bed = house.Find("Props/Bed");
+        var corners = new List<Vector3>();
+        bool route = bed != null && RoutePlanner.TryRouteTo(bed, body.position, body.GetComponent<CharacterController>().radius, nav.stopGap, corners);
+        Check(route && corners.Count > 2, $"a route from the hall to the bed goes round through the doorway ({corners.Count} corners)");
+        Check(gravity.IsGrounded, "still on the floor at the end");
+    }
+}

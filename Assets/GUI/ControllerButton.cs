@@ -3,16 +3,21 @@
 // press or a long press. Released before longPressSec = short press. Held that long = long press,
 // which fires while the button is still down, so the user feels it happen. A short buzz confirms each.
 //
-// The panel uses it for A: short press mutes / unmutes the mic, long press shows / hides the panel.
-// In the Editor, F1 does the same, for testing without a headset.
+// The panel uses it for A: short press mutes / unmutes the mic, long press shows / hides the panel; and for
+// B (the secondary button): cancel the command. In the Editor, F1 (A) and F2 (B) do the same, for testing
+// without a headset.
 using System;
 using UnityEngine;
 using UnityEngine.XR;
 
 public class ControllerButton : MonoBehaviour
 {
+    public enum Which { Primary, Secondary }
+
     [Tooltip("Which controller.")]
     public XRNode hand = XRNode.RightHand;
+    [Tooltip("Primary = A / X, Secondary = B / Y.")]
+    public Which button = Which.Primary;
     [Tooltip("Seconds held for a long press.")]
     public float longPressSec = 0.6f;
 
@@ -53,14 +58,15 @@ public class ControllerButton : MonoBehaviour
     private bool ReadController()
     {
         var device = InputDevices.GetDeviceAtXRNode(hand);
-        return device.isValid && device.TryGetFeatureValue(CommonUsages.primaryButton, out bool pressed) && pressed;
+        var usage = button == Which.Secondary ? CommonUsages.secondaryButton : CommonUsages.primaryButton;
+        return device.isValid && device.TryGetFeatureValue(usage, out bool pressed) && pressed;
     }
 
-    private static bool EditorKey()
+    private bool EditorKey()
     {
 #if UNITY_EDITOR
         var keyboard = UnityEngine.InputSystem.Keyboard.current;
-        return keyboard != null && keyboard.f1Key.isPressed;
+        return keyboard != null && (button == Which.Secondary ? keyboard.f2Key.isPressed : keyboard.f1Key.isPressed);
 #else
         return false;
 #endif

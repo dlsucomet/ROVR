@@ -9,10 +9,13 @@
 //             ("Turn towards the toilet").
 //   MazeExit  the head within `distance` m of the Maze's exit pad.
 //
-// Markers: a yellow pillar beside the goal, with a beacon above it that fades from translucent to clear
-// (the Plain), a pillar alone (the Maze checkpoints), or nothing (the House, where the object's name is the
-// only cue). Only the current objective's marker is shown. Markers have no colliders and no SceneLabel, so
-// they never block movement and ROVR can't name them.
+// Markers: a column of see-through yellow light rising from the ground, fading to clear at the top (like a
+// checkpoint in an open-world game), with no solid part: tall in the Plain (30 m, seen across the field) and at
+// the Maze's exit, shorter at the Maze checkpoints (8 m, just over the hedges); nothing in the House, where
+// the object's name is the only cue. Only the current objective's marker is shown. Markers never block movement. In the Plain and
+// the House ROVR can't name them (the participant names the landmark or the furniture); in the Maze, whose
+// objectives say "Go to the yellow marker", the marker is named "marker" (a trigger, so still not solid),
+// so "go to the yellow marker" works.
 //
 // The Maze also gets a glowing trail along its correct route (MazeTrail); the checkpoints sit on that route at
 // a quarter, a half and three quarters of the way.
@@ -25,7 +28,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public enum GoalKind { Spot, Object, Room, Face, MazeExit }
-public enum GoalLook { None, Pillar, Beacon }
+public enum GoalLook { None, ShortBeacon, Beacon }
 
 [Serializable]
 public class StudyTask
@@ -51,10 +54,12 @@ public class StudyTasks : MonoBehaviour
 
     const float PlainGap = 1.5f;        // Plain landmarks: body within 1.5 m (an open field, less precision)
     const float HouseGap = 1f;          // House furniture: body within 1 m
-    const float CheckpointRadius = 2f;  // half a 4 m maze corridor: anyone walking the route passes it
+    const float CheckpointRadius = 2.5f; // half a 5 m maze corridor: anyone walking the route passes it
     const float FaceDegrees = 15f;
     const float FaceHoldSeconds = 0.5f;
-    const float BeaconHeight = 30f;
+    const float BeaconHeight = 30f;      // the Plain and the Maze's exit
+    const float ShortBeaconHeight = 8f;  // the Maze checkpoints: over the 3 m hedges
+    const float BeaconWidth = 0.4f;
 
     private VRControlPanel _panel;
     private MazeTrail _trail;
@@ -99,14 +104,16 @@ public class StudyTasks : MonoBehaviour
                                goal = comingFrom, distance = PlainGap, look = GoalLook.Beacon };
     }
 
-    // Three checkpoints on the correct route (their positions come from the trail), then the exit.
+    // Three checkpoints on the correct route (their positions come from the trail), then the exit. Each says
+    // plainly what to look for: the yellow marker, then the exit's yellow beacon.
     private static IEnumerable<StudyTask> Maze()
     {
+        string[] which = { "Go to the yellow marker", "Go to the next yellow marker", "Go to the next yellow marker" };
         for (int i = 1; i <= 3; i++)
-            yield return new StudyTask { world = "Maze", instruction = $"Follow the trail to checkpoint {i}", kind = GoalKind.Spot,
-                                         target = "checkpoint " + i, distance = CheckpointRadius, look = GoalLook.Pillar };
-        yield return new StudyTask { world = "Maze", instruction = "Follow the trail to the exit", kind = GoalKind.MazeExit,
-                                     distance = 2f, look = GoalLook.None };
+            yield return new StudyTask { world = "Maze", instruction = which[i - 1] + " (follow the trail)", kind = GoalKind.Spot,
+                                         target = "checkpoint " + i, distance = CheckpointRadius, look = GoalLook.ShortBeacon };
+        yield return new StudyTask { world = "Maze", instruction = "Go to the exit, under the yellow beacon", kind = GoalKind.MazeExit,
+                                     distance = 2.5f, look = GoalLook.Beacon };
     }
 
     // Two objectives per room. House coordinates: living room (0..9, 0..10), bedroom (0..9, 10..20) with its
@@ -227,21 +234,28 @@ public class StudyTasks : MonoBehaviour
         at.y = FloorBelow(task);
 
         _marker = new GameObject("Objective Marker");
-        var pillar = Part(PrimitiveType.Cylinder, "Pillar", _marker.transform, at + Vector3.up * 0.6f, new Vector3(0.5f, 0.6f, 0.5f));
-        pillar.GetComponent<Renderer>().material.color = new Color(1f, 0.85f, 0.2f); // the primitive's own material: nothing a build could strip
-
-        if (task.look == GoalLook.Beacon)
+        if (string.Equals(task.world, "Maze", StringComparison.OrdinalIgnoreCase))
         {
-            if (_beaconMaterial == null)
-            {
-                var shader = Shader.Find("ROVR/Beacon");
-                if (shader == null) { Debug.LogWarning("[ROVR] No ROVR/Beacon shader (Assets/Resources/Shaders), so the marker has no beacon."); return; }
-                _beaconMaterial = new Material(shader);
-            }
-            var beacon = Part(PrimitiveType.Cylinder, "Beacon", _marker.transform, at + Vector3.up * (1.2f + BeaconHeight / 2f),
-                              new Vector3(0.6f, BeaconHeight / 2f, 0.6f));
-            beacon.GetComponent<Renderer>().sharedMaterial = _beaconMaterial;
+            // Seen by ROVR's view scan as "marker", walked up to, never bumped into.
+            var trigger = _marker.AddComponent<CapsuleCollider>();
+            trigger.isTrigger = true;
+            trigger.center = at + Vector3.up * 1f - _marker.transform.position;
+            trigger.radius = 0.4f;
+            trigger.height = 2f;
+            _marker.AddComponent<ROVR.SceneLabel>().label = "marker";
         }
+
+        if (_beaconMaterial == null)
+        {
+            var shader = Shader.Find("ROVR/Beacon");
+            if (shader == null) { Debug.LogWarning("[ROVR] No ROVR/Beacon shader (Assets/Resources/Shaders), so the marker has no beacon."); return; }
+            _beaconMaterial = new Material(shader);
+        }
+        // From the ground up, see-through: no solid part.
+        float height = task.look == GoalLook.ShortBeacon ? ShortBeaconHeight : BeaconHeight;
+        var beacon = Part(PrimitiveType.Cylinder, "Beacon", _marker.transform, at + Vector3.up * (height / 2f),
+                          new Vector3(BeaconWidth, height / 2f, BeaconWidth));
+        beacon.GetComponent<Renderer>().sharedMaterial = _beaconMaterial;
     }
 
     public void HideGoal()

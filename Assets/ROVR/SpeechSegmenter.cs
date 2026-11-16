@@ -68,8 +68,34 @@ namespace ROVR
             }
         }
 
-        // Drops the sentence in progress (e.g. when the microphone is muted). What the room sounds like is
-        // kept, since it hasn't changed.
+        // Ends the sentence in progress now, as if the speaker had paused (the microphone was muted
+        // mid-sentence): what was said so far is handed out as a finished sentence, so it's still acted on.
+        // True if there was one; a sentence that hadn't really started (a click) is just dropped.
+        public bool Flush()
+        {
+            bool had = InSentence && sentence.Count > 0;
+            if (had)
+            {
+                // The partly filled frame is speech too.
+                if (frameFill > 0)
+                {
+                    var last = new float[frameFill];
+                    Array.Copy(frame, last, frameFill);
+                    sentence.Add(last);
+                }
+                int drop = Math.Max(0, silenceFrames - TrailingSilenceFramesKept);
+                if (drop > 0 && drop < sentence.Count) sentence.RemoveRange(sentence.Count - drop, drop);
+                float[] audio = Join(sentence);
+                Reset();
+                OnSentence?.Invoke(audio);
+                return true;
+            }
+            Reset();
+            return false;
+        }
+
+        // Drops the sentence in progress (the cancel button). What the room sounds like is kept, since it
+        // hasn't changed.
         public void Reset()
         {
             frameFill = 0;

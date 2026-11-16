@@ -53,6 +53,7 @@ public class StudySession : MonoBehaviour
     public float Seconds => _log != null ? _log.Seconds : 0f;
     public StudyMenu Menu => _menu;
     public ObjectiveBanner Banner => _banner;
+    public StudyTasks Tasks => _tasks; // for the minimap's objective marker
 
     private VRControlPanel _panel;
     private StudyTasks _tasks;

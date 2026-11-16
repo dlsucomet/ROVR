@@ -4,11 +4,11 @@
 // Plays main.unity and walks a study session through the real StudySession, StudyMenu, ObjectiveBanner and
 // StudyWorldLog, checking the CSVs it writes:
 //   - p002 (traditional, seq1: plains, maze, house) types the ID on the menu; practice; Next.
-//   - Every objective's object is in the scene, and the Maze trail follows the 52-cell correct route.
+//   - Every objective's object is in the scene, and the Maze trail follows the 19-cell correct route.
 //   - Plains: nothing is logged until the first stick push; then 8-direction rows; the five landmarks are
-//     reached one after the other, each with a pillar and beacon; world_end completed; the "World complete" card.
-//   - Maze: a run restarted by the researcher (run 1 incomplete); run 2 reaches the three checkpoints (pillars,
-//     no beacon) and the exit.
+//     reached one after the other, each with a beacon (no solid pillar); world_end completed; the "World complete" card.
+//   - Maze: a run restarted by the researcher (run 1 incomplete); run 2 reaches the three checkpoints (short
+//     beacons) and the exit.
 //   - House: no markers; the furniture, the two bathrooms and "turn towards the shower" reached; the last
 //     objective skipped (completed, 1 skipped). Then finished.
 //   - p002 again: all three worlds already completed on this device, so Next goes straight to "All done".
@@ -133,9 +133,9 @@ public static class StudyFlowCheck
         var tasks = panel.GetComponent<StudyTasks>();
         var missing = tasks.Missing();
         Check(missing.Count == 0, "every objective's object is in the scene" + (missing.Count > 0 ? ": missing " + string.Join("; ", missing) : ""));
-        Check(tasks.MazeRouteCells == 52, $"the maze trail follows the 52-cell correct route (got {tasks.MazeRouteCells})");
+        Check(tasks.MazeRouteCells == 19, $"the maze trail follows the 19-cell correct route (got {tasks.MazeRouteCells})");
         Check(session.ObjectiveCount == 5, $"the plains have 5 objectives (got {session.ObjectiveCount})");
-        Check(GameObject.Find("Objective Marker/Pillar") != null && GameObject.Find("Objective Marker/Beacon") != null, "a plains objective has a pillar and a beacon");
+        Check(GameObject.Find("Objective Marker/Pillar") == null && GameObject.Find("Objective Marker/Beacon") != null, "a plains objective has a beacon and no solid pillar");
         yield return 1f;
         Check(session.Now == StudySession.Phase.WorldReady && !File.Exists(Path.Combine(Folder, "p002-trad-plains.csv")), "no clock and no file before the first action");
 
@@ -180,7 +180,8 @@ public static class StudyFlowCheck
         manual.SimulatedMove = null;
         int mazeCount = session.ObjectiveCount;
         Check(mazeCount == 4, $"the maze has 3 checkpoints and the exit (got {mazeCount} objectives)");
-        Check(GameObject.Find("Objective Marker/Pillar") != null && GameObject.Find("Objective Marker/Beacon") == null, "a checkpoint has a pillar and no beacon");
+        var checkpointBeacon = GameObject.Find("Objective Marker/Beacon");
+        Check(GameObject.Find("Objective Marker/Pillar") == null && checkpointBeacon != null && checkpointBeacon.transform.localScale.y < 10f, "a checkpoint has a short beacon and no solid pillar");
         for (int i = 0; i < mazeCount; i++)
         {
             panel.PlaceAt(tasks.GoalOf(session.CurrentTask), 0f, "Maze", "flow check");

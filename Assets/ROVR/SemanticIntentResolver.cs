@@ -14,6 +14,9 @@
 //     can never restart movement. A newer utterance likewise supersedes an older, unanswered one.
 //   - No silent failures (5.5.6): unusable output, unknown objects, blocked moves and turns that find
 //     nothing all produce a message for the user.
+//   - Each sentence stands on its own: the primary movements (move, sidestep, turn, counted steps) are read
+//     straight from the words (QuickCommands), and a target, distance or angle the user didn't say this
+//     time is dropped from the model's reply (DropCarriedOver), so nothing leaks from the last command.
 //   - Which one (5.4.3): when several matching objects are in view, the engine asks and makes them
 //     glow; the user answers by looking at one and saying "that one", or in words ("the left one",
 //     "the one by the pond"). The pick is remembered, so repeating the command later doesn't ask again.
@@ -29,6 +32,8 @@ namespace ROVR
         [SerializeField] FOVMetadataGrounding grounding;
         [SerializeField] NavigationController controller;
         [SerializeField] float stateTimeoutSeconds = 60f; // older than this, the previous command is forgotten
+        [Tooltip("Metres in one step (\"take two steps\" = twice this, when nothing's in the way). The same for forward, back and sidesteps. It still adapts a little to the person (MovementHabits).")]
+        [SerializeField] float stepMeters = MovementHabits.DefaultStepMeters;
 
         const float AheadDegrees = 25f;             // a target further off-axis than this isn't "ahead"
         const float AmbiguousSpreadDegrees = 10f;   // matches this far apart are different targets
@@ -85,6 +90,8 @@ STEPS. Each step has:
 
 SEVERAL STEPS. A command can have several steps, done in order. 'Move forward 10 meters, then turn right' = a move step, then a turn step. 'Face right when you reach the tree' = move to the tree, then turn right: put the steps in the order they happen, not the order they are said. 'Move forward and turn left when you see the door' = move forward with condition door and until see, then turn left. 'Turn right three times' = three turn steps; 'move forward 2 meters twice' = two move steps of 2 meters.
 
+SIDESTEPS. Left and right moves are sidesteps: the user moves that way without turning. 'step left', 'sidestep left', 'take two steps to the right' are moves left / right with amount steps, never turns.
+
 TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. A turn can be any angle: 'turn 30 degrees to the right' = amount exact, magnitude 30; 'turn left a little' = amount small. 'Face the door', 'turn to the door' or 'look at the door' = a turn step with condition door (direction none unless a side is said). 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
 
 NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
@@ -95,7 +102,7 @@ PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat 
 
 WHICH ONE. When the user singles out one of several objects, set which: left, right, middle, nearest (the closer one), farthest, or looking (that one, this one, that tree: the one they are looking at); or set which_near to the object it is next to ('the tree by the pond' = pond). Otherwise both are empty strings. When you asked the user which one and they only answer that ('the left one', 'that one', 'the one by the pond'), return no steps and set which or which_near.
 
-If you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
+Each command is new: take a target, distance or angle only from the user's words in this command, never from the previous command, except for the follow-ups above. If the command seems cut off or you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
 
 EXAMPLES
 Command: move forward 5 meters
@@ -148,6 +155,14 @@ Command: take 4 steps toward the tree (a tree is ahead)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""steps"",""magnitude"":4,""condition"":""tree"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: take steps until you see the door
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""steps"",""magnitude"":0,""condition"":""door"",""until"":""see"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: take two steps to the left
+{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""steps"",""magnitude"":2,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: move toward the tree (a tree is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""tree"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: bring me to the table (a table is ahead)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""table"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: move forward (previous command was a move to the tree)
+{""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: go to the lamp (no lamp in the visible objects list)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""none"",""magnitude"":0,""condition"":""lamp"",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}";
 
@@ -170,14 +185,23 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         void Start()
         {
+            Habits.DefaultStep = stepMeters;
+            Habits.Reset();
             if (ollama != null) ollama.WarmUp(SystemPrompt);
+        }
+
+        // The experimenter's step length (metres); takes effect from the next command.
+        public float StepMeters
+        {
+            get => stepMeters;
+            set { stepMeters = Mathf.Clamp(value, MovementHabits.MinStepMeters, MovementHabits.MaxStepMeters); Habits.DefaultStep = stepMeters; Habits.Reset(); }
         }
 
         // Call between participants so one person's habits and context never carry into the next trial.
         public void ResetSession()
         {
             requestId++;
-            controller.Halt();
+            controller.EmergencyStop();
             controller.ForgetPath();
             Habits.Reset();
             lastCommand = null;
@@ -209,14 +233,33 @@ Command: go to the lamp (no lamp in the visible objects list)
             SetSpeed(level);
         }
 
-        // Stops movement now and cancels any request still waiting on the LLM, so a late reply can't
-        // restart it. For voice input's early "stop" check, which fires before the sentence is finished.
-        public void HaltNow()
+        // Stops movement and cancels any request still waiting on the LLM, so a late reply can't restart
+        // it. For voice input's early "stop" check, which fires before the sentence is finished. The body
+        // eases to a stop (a fraction of a second); immediate stops it dead (teleports, breaks).
+        public void HaltNow(bool immediate = false)
         {
             requestId++;
-            controller.Halt();
+            IsThinking = false;
+            if (immediate) controller.EmergencyStop(); else controller.Halt();
             ClearChoice();
         }
+
+        // The cancel button: stops dead, drops any request still waiting on the LLM and any question.
+        public void CancelCommand()
+        {
+            requestId++;
+            IsThinking = false;
+            NextIsCutOff = false;
+            controller.EmergencyStop();
+            ClearChoice();
+            pendingClarification = null;
+        }
+
+        // True while a sentence is with the LLM (for the status line).
+        public bool IsThinking { get; private set; }
+
+        // The sentence was cut short by muting: the model is told, so it asks rather than guesses.
+        public bool NextIsCutOff { get; set; }
 
         public void SubmitUtterance(string utterance)
         {
@@ -227,7 +270,8 @@ Command: go to the lamp (no lamp in the visible objects list)
             if (interrupt.isHalt)
             {
                 requestId++;      // anything still waiting on the LLM predates this halt and must not run
-                controller.Halt();
+                IsThinking = false;
+                controller.Halt(); // eases to a stop, whatever the word ("stop", "freeze"): a dead stop is nauseating
                 ClearChoice();
                 if (string.IsNullOrEmpty(interrupt.remainder)) return;
                 utterance = interrupt.remainder; // "wait, I mean left": the correction still goes through
@@ -269,7 +313,57 @@ Command: go to the lamp (no lamp in the visible objects list)
                 return;
             }
 
+            // "Get me out of this room": the engine knows the rooms and their doorways (HouseRooms).
+            if (LeaveRoomWords.IsMatch(utterance.ToLowerInvariant()))
+            {
+                LeaveRoom();
+                return;
+            }
+
+            // The primary movements, read from the words at once (no model round trip), so they take over
+            // from whatever is running straight away.
+            var quick = QuickCommands.TryParse(utterance);
+            if (quick != null)
+            {
+                requestId++; // an older sentence still with the LLM is superseded
+                IsThinking = false;
+                NextIsCutOff = false;
+                ClearChoice();
+                Proceed(quick, new List<GroundedObject>(), utterance);
+                return;
+            }
+
             Resolve(utterance);
+        }
+
+        static readonly System.Text.RegularExpressions.Regex LeaveRoomWords = new System.Text.RegularExpressions.Regex(
+            @"\b(?:(?:get|take|bring|lead|guide|walk) me out|get out|leave (?:the|this) room|exit (?:the|this) room|out of (?:the|this) room|out of here)\b");
+
+        // Walks to the nearest way out of the room the user is in (HouseRooms), through its doorway, and
+        // faces on out. Anywhere without known rooms, asks which way instead.
+        void LeaveRoom()
+        {
+            requestId++;
+            IsThinking = false;
+            ClearChoice();
+            if (!HouseRooms.TryWayOut(transform.position, out Vector3 point, out Vector3 face, out string room, out string into))
+            {
+                const string question = "I don't know the way out from here. Which way do you want to go?";
+                OnCommandResolved?.Invoke(NavigationCommand.Clarification(question));
+                Ask(question);
+                return;
+            }
+            var command = new NavigationCommand
+            {
+                steps = new[] { new NavigationStep { action = ActionType.GoTo, direction = DirectionType.Forward, condition = string.Empty, point = point, faceTowards = face } },
+                summary = "Leaving the " + room + " for the " + into
+            };
+            OnCommandResolved?.Invoke(command);
+            lastCommand = command;
+            lastOutcome = null;
+            lastCommandTime = Time.time;
+            pendingClarification = null;
+            controller.Execute(command);
         }
 
         // Undoes the last command: stops what's running, then turns round, walks back and faces the way the
@@ -319,13 +413,20 @@ Command: go to the lamp (no lamp in the visible objects list)
         void Resolve(string utterance)
         {
             int id = ++requestId;
+            IsThinking = true;
             var visible = grounding.ScanFieldOfView(); // what the user sees right now
             string userPrompt = BuildUserPrompt(utterance, grounding.ToJson(visible));
+            if (NextIsCutOff)
+            {
+                userPrompt = "The user muted the microphone while saying this, so it may be cut off.\n" + userPrompt;
+                NextIsCutOff = false;
+            }
 
             ollama.RequestCommand(SystemPrompt, userPrompt,
                 command =>
                 {
                     if (id != requestId) return;
+                    IsThinking = false;
                     // The model was seen to drop a step from "move forward 10 meters, then turn right".
                     // If it returned fewer steps than the actions the user chained, ask about each part.
                     var clauses = SplitClauses(utterance);
@@ -334,7 +435,7 @@ Command: go to the lamp (no lamp in the visible objects list)
                     else
                         OnResolved(command, visible, utterance);
                 },
-                error => { if (id == requestId) OnError?.Invoke(error); });
+                error => { if (id == requestId) { IsThinking = false; OnError?.Invoke(error); } });
         }
 
         // Asks the LLM about each chained part in turn and runs them as one command.
@@ -418,6 +519,7 @@ Command: go to the lamp (no lamp in the visible objects list)
         void Proceed(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
             glowNext = null;
+            if (!command.IsClarification) DropCarriedOver(command, utterance);
             string problem = command.IsClarification ? null : FindGroundingProblem(command, visible, utterance);
             if (problem != null) command = NavigationCommand.Clarification(problem);
             OnChoicesChanged?.Invoke(glowNext != null ? (IList<Transform>)glowNext : NoObjects);
@@ -459,7 +561,6 @@ Command: go to the lamp (no lamp in the visible objects list)
             ApplySteps(command, utterance);
             AttachMissingTarget(command, utterance);
             ApplyRepeatsAndTurnAround(command, utterance);
-            TurnForSideSteps(command);
 
             bool viewChanged = false; // after a move or a turn, what's in view is different: later targets are found when their step starts
 
@@ -637,24 +738,52 @@ Command: go to the lamp (no lamp in the visible objects list)
             moves[0].magnitude = count;
         }
 
-        // "Take two steps to the left": a person turns that way and walks, so: turn left, then two steps forward.
-        static void TurnForSideSteps(NavigationCommand command)
-        {
-            bool Sideways(NavigationStep s) => s.action == ActionType.Move && s.InSteps && (s.direction == DirectionType.Left || s.direction == DirectionType.Right);
-            if (!Array.Exists(command.steps, Sideways)) return;
+        // "Take two steps to the left" is two sidesteps: the move goes left and the view doesn't turn
+        // (NavigationController strafes). It used to become "turn left, then two steps forward".
 
-            var steps = new List<NavigationStep>();
-            foreach (var s in command.steps)
+        // ---------------------------------------------------------------- one sentence at a time
+
+        static readonly System.Text.RegularExpressions.Regex SaysNumber = new System.Text.RegularExpressions.Regex(
+            @"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|half|quarter|couple|few|dozen)\b");
+        static readonly string[] Pointing = { "it", "that", "this", "there", "them" };
+
+        // The model was seen to copy the previous command's target into "move forward" (so it stopped at
+        // once, or walked off toward the old target) and its distance or angle into a new command. Each
+        // sentence is its own instruction: a target the user didn't name and a number they didn't say are
+        // dropped here. Follow-ups ("a bit more", "again") only ever repeat a direction (the prompt), so
+        // they lose nothing. Commands resumed after "which one?" (no utterance) were already checked.
+        void DropCarriedOver(NavigationCommand command, string utterance)
+        {
+            if (string.IsNullOrEmpty(utterance)) return;
+            string text = " " + string.Join(" ", WordsOf(utterance)) + " ";
+            var known = grounding.KnownNames();
+            var said = ObjectVocabulary.WordsIn(utterance, known);
+            bool pointing = Array.Exists(Pointing, w => text.Contains(" " + w + " "));
+            bool number = SaysNumber.IsMatch(utterance.ToLowerInvariant());
+
+            foreach (var step in command.steps)
             {
-                if (Sideways(s))
+                if (step.HasCondition && !grounding.IsId(step.condition) && !pointing && !Mentions(text, step.condition, said, known))
                 {
-                    steps.Add(new NavigationStep { action = ActionType.Turn, direction = s.direction, amount = AmountType.Exact, magnitude = 90f, condition = string.Empty, until = UntilType.Reach });
-                    s.direction = DirectionType.Forward;
+                    step.condition = string.Empty;
+                    step.until = UntilType.Reach;
                 }
-                steps.Add(s);
+                if (step.amount == AmountType.Exact && !number)
+                {
+                    step.amount = AmountType.None; // "turn left" = 90; "turn around" gets its 180 back in ApplyRepeatsAndTurnAround
+                    step.magnitude = 0f;
+                }
             }
-            if (steps.Count > NavigationCommand.MaxSteps) steps.RemoveRange(NavigationCommand.MaxSteps, steps.Count - NavigationCommand.MaxSteps);
-            command.steps = steps.ToArray();
+        }
+
+        static bool Mentions(string text, string condition, List<string> said, ICollection<string> known)
+        {
+            string word = condition.Trim().ToLowerInvariant();
+            if (word.Length == 0) return true;
+            string stem = word.EndsWith("s") && word.Length > 3 ? word.Substring(0, word.Length - 1) : word;
+            if (text.Contains(" " + stem)) return true;
+            var names = ObjectVocabulary.NamesFor(word, known);
+            return said.Exists(w => ObjectVocabulary.NamesFor(w, known).Exists(names.Contains));
         }
 
         // The object a step is about, as a scan name ("sofa") or one object's id, worked out from the

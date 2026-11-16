@@ -16,4 +16,17 @@ public static class WorldBuilder
         MazeGenerator.Generate(new Vector3(0, 0, 200));
         PracticeGenerator.Generate(new Vector3(-200, 0, 0)); // PLACEHOLDER practice area
     }
+
+    // Rebuilds only the Maze in Assets/main.unity, where it was, and saves the scene. For the command line
+    // (the Editor closed):
+    //   Unity -batchmode -quit -projectPath . -executeMethod WorldBuilder.RebuildMazeInMainScene -logFile maze.log
+    public static void RebuildMazeInMainScene()
+    {
+        var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/main.unity");
+        var old = GameObject.Find("Maze");
+        Vector3 at = old != null ? old.transform.position : new Vector3(0, 0, 200);
+        MazeGenerator.Generate(at);
+        UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
+        Debug.Log("[WorldBuilder] Maze rebuilt at " + at + " and main.unity saved");
+    }
 }

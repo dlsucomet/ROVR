@@ -8,7 +8,7 @@
 //   MainCanvas (the panel, with VRControlPanel): heard text, reply, and a row of buttons. Hidden at start;
 //     A held shows it, straight in front of the user, then it follows lazily (LazyFollow).
 //   CaptionStrip: a small strip low in the view while the panel is hidden (heard, reply, mic icon).
-//   TutorialCard: before practice, and from "?". PLACEHOLDER diagrams for now.
+//   TutorialCard: before practice, and from "?". It shows the controls diagram for the condition (ControlsDiagram).
 //
 // The mic icons are drawn here into Assets/GUI/Sprites (MicOn.png, MicOff.png). The rounded shapes use
 // Unity's built-in UI sprites.

@@ -2,8 +2,10 @@
 // The card shown before practice that explains the controls for the participant's condition, and again
 // from the panel's Tutorial (?) button.
 //
-// PLACEHOLDER: the diagrams aren't made yet. Each card shows its title and a labelled empty frame where the
-// diagram goes. Replace them before user testing.
+// It shows the controls diagram for the condition (ControlsDiagram) where PanelBuilder put the empty
+// diagram frame, and under it the main moves in words: for ROVR the phrases for moving forward, counted
+// steps, sidestepping and turning, and that "forward" is the way the user faces when they speak. Messages
+// (ShowMessage) show their text in the frame instead.
 //
 // Closed with A or its Close button. It also shows the session's waiting card ("Waiting to start",
 // ShowMessage), which the participant can't close: it stays until the session is set up.
@@ -20,6 +22,17 @@ public class TutorialCard : MonoBehaviour
     public Text hint; // "Press A to continue"
     public LazyFollow follow;
 
+    private const float DiagramWidth = 560f; // canvas units; the card is 640 x 460
+    private RawImage _diagram;
+    private Text _moves; // the main moves in words, under the diagram
+
+    private const string VoiceMoves =
+        "Say \"move forward\", \"take two steps forward\", \"step left\" (a sidestep: you don't turn) or \"turn right 90 degrees\".\n" +
+        "Forward is the way you're facing when you speak. A new command takes over at once. B cancels.";
+    private const string StickMoves =
+        "Left stick: walk forward and back, and sidestep left and right. Right stick: turn.\n" +
+        "Forward is the way you're facing.";
+
     public bool Shown => canvas != null && canvas.enabled;
     public bool Closable { get; private set; } = true;
     public event Action OnClosed;
@@ -34,10 +47,52 @@ public class TutorialCard : MonoBehaviour
         if (canvas == null) return;
         bool voice = condition == StudyCondition.ROVR;
         if (title != null) title.text = voice ? "Tutorial: ROVR (voice)" : "Tutorial: Manual (controller)";
-        if (diagramLabel != null)
-            diagramLabel.text = "PLACEHOLDER\n" + (voice ? "Voice controls diagram" : "Controller diagram") + "\n(to be made before user testing)";
+        if (_diagram == null) _diagram = ControlsDiagram.Attach(transform, new Vector2(0f, 30f), DiagramWidth);
+        ControlsDiagram.Show(_diagram, condition);
+        bool hasDiagram = _diagram.enabled;
+        if (_moves == null) _moves = MakeMoves();
+        if (_moves != null)
+        {
+            _moves.gameObject.SetActive(hasDiagram);
+            _moves.text = voice ? VoiceMoves : StickMoves;
+        }
+        SetFrame(!hasDiagram);
+        if (!hasDiagram && diagramLabel != null)
+            diagramLabel.text = voice ? "Speak to move. Tap A: mic on / off." : "Left stick: walk. Right stick: turn.";
         SetClosable(true);
         Open();
+    }
+
+    // Two lines under the diagram, in the title's font, made at run time so the card in the scene needn't
+    // be rebuilt.
+    private Text MakeMoves()
+    {
+        if (title == null) return null;
+        var go = new GameObject("Moves", typeof(RectTransform), typeof(Text));
+        var rt = (RectTransform)go.transform;
+        rt.SetParent(transform, false);
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(600f, 56f);
+        rt.anchoredPosition = new Vector2(0f, -150f);
+        var t = go.GetComponent<Text>();
+        t.font = title.font;
+        t.fontSize = 15;
+        t.lineSpacing = 1.1f;
+        t.alignment = TextAnchor.MiddleCenter;
+        t.horizontalOverflow = HorizontalWrapMode.Wrap;
+        t.verticalOverflow = VerticalWrapMode.Overflow;
+        t.color = new Color(0.86f, 0.89f, 0.94f);
+        t.raycastTarget = false;
+        if (title.material != null) t.material = title.material; // drawn on top, like the rest of the card
+        return t;
+    }
+
+    // The empty frame and its text, shown for messages (and if the diagram is missing).
+    private void SetFrame(bool shown)
+    {
+        if (diagramLabel != null) diagramLabel.gameObject.SetActive(shown);
+        var frame = transform.Find("DiagramFrame");
+        if (frame != null) frame.gameObject.SetActive(shown);
     }
 
     // A message in place of the tutorial ("Waiting to start"). One that isn't closable has no Close
@@ -46,6 +101,9 @@ public class TutorialCard : MonoBehaviour
     {
         if (canvas == null) return;
         if (title != null) title.text = heading;
+        if (_diagram != null) _diagram.enabled = false;
+        if (_moves != null) _moves.gameObject.SetActive(false);
+        SetFrame(true);
         if (diagramLabel != null) diagramLabel.text = message;
         SetClosable(closable);
         Open();

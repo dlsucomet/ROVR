@@ -1,7 +1,7 @@
 // Assets/GUI/MazeTrail.cs
 // A glowing trail on the Maze's floor along the correct route, from the start pad to the exit pad, with
 // chevrons pointing the way (ROVR/GlowTrail shader). The route is found when Play starts, from the maze's own
-// wall colliders (a breadth-first search over its 4 m cells), so it always matches the generated maze. The
+// wall colliders (a breadth-first search over its 5 m cells), so it always matches the generated maze. The
 // study's checkpoints sit on this route.
 //
 // No collider and no SceneLabel: the trail never blocks movement and ROVR can't name it.
@@ -10,7 +10,7 @@ using UnityEngine;
 
 public class MazeTrail : MonoBehaviour
 {
-    const float CellSize = 4f;     // MazeGenerator.CellSize
+    public const float CellSize = 5f; // the maze's cells; MazeGenerator builds with this
     const float Width = 0.6f;
     const float Corner = 1.2f;     // radius of the rounded turns
     const float Lift = 0.02f;      // above the floor, so it never flickers into it

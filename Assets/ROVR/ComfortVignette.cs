@@ -2,6 +2,8 @@
 // Darkens the edges of the view while the avatar turns (a comfort vignette): seeing the world rotate
 // without feeling it is a common cause of motion sickness in VR, and narrowing the view while it
 // happens reduces that. Fades in when NavigationController starts a turn and out when it ends.
+// It also darkens, more lightly, while walking forward or back (duringMovement, on), including while easing
+// to a stop. Sidesteps don't darken it. Whether it helps is for testing with people, not a fix in itself.
 // Drawn on a quad just in front of the head camera, sized to the camera's field of view each frame,
 // so the ring sits at the edges of the screen in the headset and on the desktop alike.
 using UnityEngine;
@@ -13,6 +15,9 @@ namespace ROVR
         [SerializeField] NavigationController controller;
         [Tooltip("How dark the edges get while turning (0 = off).")]
         [Range(0f, 1f)] [SerializeField] float strength = 0.85f;
+        [Tooltip("Also darken the edges while walking forward or back (lighter than for turns).")]
+        public bool duringMovement = true;
+        [Range(0f, 1f)] public float movementStrength = 0.5f;
         [Tooltip("Seconds to fade in and out.")]
         [SerializeField] float fadeSeconds = 0.15f;
         [Tooltip("How much of the middle of the view stays clear (0 to 1).")]
@@ -28,6 +33,7 @@ namespace ROVR
         Transform quad;
         Material material;
         float current;
+        public float Amount => current; // how dark the edges are now, 0 to the strength (for tests)
         static readonly int StrengthId = Shader.PropertyToID("_Strength");
 
         void Start()
@@ -60,7 +66,8 @@ namespace ROVR
         {
             if (manual == null) manual = GetComponent<ManualLocomotion>(); // added after this, by the panel
             bool turning = (controller != null && controller.IsTurning) || (manual != null && manual.enabled && manual.IsTurning);
-            float target = turning ? strength : 0f;
+            bool moving = duringMovement && ((controller != null && controller.IsMovingForwardBack) || (manual != null && manual.enabled && manual.IsMovingForwardBack));
+            float target = turning ? strength : moving ? movementStrength : 0f;
             current = Mathf.MoveTowards(current, target, Time.deltaTime / Mathf.Max(0.01f, fadeSeconds));
             material.SetFloat(StrengthId, current);
 

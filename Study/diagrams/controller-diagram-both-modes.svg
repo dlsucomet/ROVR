@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960" width="1600" height="960" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b4048"/>
+      <stop offset="1" stop-color="#23262b"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f8fb"/>
+      <stop offset="1" stop-color="#e9edf3"/>
+    </linearGradient>
+    <marker id="dot" markerWidth="8" markerHeight="8" refX="4" refY="4"><circle cx="4" cy="4" r="3.2" fill="#222"/></marker>
+    <marker id="dotg" markerWidth="8" markerHeight="8" refX="4" refY="4"><circle cx="4" cy="4" r="3.2" fill="#777"/></marker>
+  </defs>
+
+  <rect width="1600" height="960" fill="url(#bg)"/>
+
+  <text x="800" y="56" text-anchor="middle" font-size="40" font-weight="700" fill="#1b2330">ROVR controller guide</text>
+  <text x="800" y="92" text-anchor="middle" font-size="22" fill="#4a5568">Meta Quest 3 controllers: aim the laser at things, then use the buttons</text>
+
+  <!-- ================= LEFT CONTROLLER (top view) ================= -->
+  <g transform="translate(520 440) scale(0.85)">
+    <path d="M -120 -150 C -150 -60 -120 150 -62 330 C -50 372 50 372 62 330 C 110 210 118 20 105 -90 C 90 -170 40 -214 -20 -214 C -70 -214 -105 -190 -120 -150 Z" fill="url(#body)" stroke="#111" stroke-width="3"/>
+    <path d="M -108 -140 C -126 -60 -100 140 -52 320" fill="none" stroke="#5b616b" stroke-width="2" opacity=".7"/>
+    <g fill="#6f7782"><circle cx="-80" cy="-130" r="5"/><circle cx="-40" cy="-176" r="5"/><circle cx="14" cy="-190" r="5"/><circle cx="62" cy="-160" r="5"/></g>
+
+    <!-- thumbstick (Manual: walk) -->
+    <circle cx="-8" cy="-60" r="58" fill="#15181c" stroke="#000" stroke-width="3"/>
+    <circle cx="-8" cy="-60" r="40" fill="#e46a1d" stroke="#7a3508" stroke-width="3"/>
+    <circle cx="-8" cy="-60" r="22" fill="#f08a3d" opacity=".85"/>
+    <g stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none">
+      <path d="M -8 -100 v-14 M -14 -108 l6 -6 l6 6"/>
+      <path d="M -8 -20 v14 M -14 -12 l6 6 l6 -6"/>
+      <path d="M -48 -60 h-14 M -56 -66 l-6 6 l6 6"/>
+      <path d="M 32 -60 h14 M 40 -66 l6 6 l-6 6"/>
+    </g>
+
+    <!-- X, Y (unused) -->
+    <circle cx="-62" cy="58" r="23" fill="#15181c" stroke="#000" stroke-width="2"/>
+    <text x="-62" y="67" text-anchor="middle" font-size="26" font-weight="700" fill="#9aa3ad">X</text>
+    <circle cx="26" cy="38" r="23" fill="#15181c" stroke="#000" stroke-width="2"/>
+    <text x="26" y="47" text-anchor="middle" font-size="26" font-weight="700" fill="#9aa3ad">Y</text>
+    <!-- menu (unused) -->
+    <circle cx="48" cy="-150" r="15" fill="#15181c" stroke="#000" stroke-width="2"/>
+    <g stroke="#9aa3ad" stroke-width="3" stroke-linecap="round"><path d="M 41 -155 h14 M 41 -150 h14 M 41 -145 h14"/></g>
+  </g>
+  <text x="520" y="792" text-anchor="middle" font-size="28" font-weight="700" fill="#1b2330">LEFT</text>
+
+  <!-- ================= RIGHT CONTROLLER (top view) ================= -->
+  <g transform="translate(1080 440) scale(0.85)">
+    <path d="M 120 -150 C 150 -60 120 150 62 330 C 50 372 -50 372 -62 330 C -110 210 -118 20 -105 -90 C -90 -170 -40 -214 20 -214 C 70 -214 105 -190 120 -150 Z" fill="url(#body)" stroke="#111" stroke-width="3"/>
+    <path d="M 108 -140 C 126 -60 100 140 52 320" fill="none" stroke="#5b616b" stroke-width="2" opacity=".7"/>
+    <g fill="#6f7782"><circle cx="80" cy="-130" r="5"/><circle cx="40" cy="-176" r="5"/><circle cx="-14" cy="-190" r="5"/><circle cx="-62" cy="-160" r="5"/></g>
+
+    <!-- thumbstick (Manual: turn) -->
+    <circle cx="8" cy="-60" r="58" fill="#15181c" stroke="#000" stroke-width="3"/>
+    <circle cx="8" cy="-60" r="40" fill="#e46a1d" stroke="#7a3508" stroke-width="3"/>
+    <circle cx="8" cy="-60" r="22" fill="#f08a3d" opacity=".85"/>
+    <g stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none">
+      <path d="M -32 -60 h-14 M -40 -66 l-6 6 l6 6"/>
+      <path d="M 48 -60 h14 M 56 -66 l6 6 l-6 6"/>
+    </g>
+
+    <!-- A (both modes) -->
+    <circle cx="62" cy="58" r="26" fill="#0f7f77" stroke="#06403c" stroke-width="3"/>
+    <text x="62" y="68" text-anchor="middle" font-size="30" font-weight="700" fill="#fff">A</text>
+    <!-- B (unused) -->
+    <circle cx="-26" cy="38" r="23" fill="#15181c" stroke="#000" stroke-width="2"/>
+    <text x="-26" y="47" text-anchor="middle" font-size="26" font-weight="700" fill="#9aa3ad">B</text>
+    <!-- Meta button (unused) -->
+    <ellipse cx="-48" cy="-150" rx="17" ry="11" fill="#15181c" stroke="#000" stroke-width="2"/>
+    <ellipse cx="-48" cy="-150" rx="8" ry="4.5" fill="none" stroke="#9aa3ad" stroke-width="2.5"/>
+  </g>
+  <text x="1080" y="792" text-anchor="middle" font-size="28" font-weight="700" fill="#1b2330">RIGHT</text>
+
+  <!-- ================= SIDE VIEW (trigger + grip), centre ================= -->
+  <g transform="translate(800 420) scale(0.8)">
+    <path d="M -70 -150 C -95 -100 -60 40 -34 130 C -26 176 30 176 40 130 C 70 60 80 -40 62 -110 C 50 -165 -40 -190 -70 -150 Z" fill="url(#body)" stroke="#111" stroke-width="3"/>
+    <path d="M -64 -118 C -112 -96 -118 -34 -92 -2 C -80 12 -62 6 -60 -8 C -64 -46 -52 -84 -46 -108 Z" fill="#0f7f77" stroke="#06403c" stroke-width="3"/>
+    <rect x="22" y="-70" width="34" height="150" rx="16" fill="#8a929c" stroke="#3d434b" stroke-width="3"/>
+  </g>
+  <text x="800" y="246" text-anchor="middle" font-size="21" font-weight="600" fill="#4a5568">Side view (either hand)</text>
+  <text x="700" y="338" text-anchor="end" font-size="20" font-weight="700" fill="#0a5d57">Trigger</text>
+  <line x1="704" y1="342" x2="720" y2="386" stroke="#222" stroke-width="2.5" marker-end="url(#dot)"/>
+  <text x="906" y="368" text-anchor="start" font-size="20" font-weight="700" fill="#5d6671">Grip</text>
+  <line x1="900" y1="364" x2="846" y2="408" stroke="#777" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#dotg)"/>
+
+  <!-- trigger box (centre bottom) -->
+  <rect x="640" y="620" width="320" height="140" rx="14" fill="#e8f7f5" stroke="#0f7f77" stroke-width="3"/>
+  <rect x="842" y="607" width="106" height="26" rx="13" fill="#0f7f77"/><text x="895" y="626" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">BOTH MODES</text>
+  <text x="656" y="652" font-size="23" font-weight="700" fill="#0a5d57">TRIGGER: click</text>
+  <text x="656" y="680" font-size="18.5" fill="#2b2b2b">Point the laser at a button on the</text>
+  <text x="656" y="702" font-size="18.5" fill="#2b2b2b">panel or menu, then squeeze. Works</text>
+  <text x="656" y="724" font-size="18.5" fill="#2b2b2b">with either hand.</text>
+  <text x="656" y="748" font-size="17" fill="#5d6671">Grip (side button): not used.</text>
+  <line x1="800" y1="620" x2="800" y2="568" stroke="#0f7f77" stroke-width="2.5"/>
+
+  <!-- ================= CALLOUTS: LEFT ================= -->
+  <!-- left stick -->
+  <rect x="20" y="170" width="380" height="104" rx="14" fill="#fff4ea" stroke="#e46a1d" stroke-width="3"/>
+  <rect x="274" y="157" width="116" height="26" rx="13" fill="#e46a1d"/><text x="332" y="176" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">MANUAL ONLY</text>
+  <text x="38" y="206" font-size="23" font-weight="700" fill="#a34a0c">LEFT STICK: walk</text>
+  <text x="38" y="234" font-size="19" fill="#2b2b2b">Push to walk forward, back or</text>
+  <text x="38" y="257" font-size="19" fill="#2b2b2b">sideways. Push further = faster.</text>
+  <line x1="400" y1="230" x2="485" y2="349" stroke="#222" stroke-width="2.5" marker-end="url(#dot)"/>
+
+  <!-- left unused -->
+  <rect x="20" y="560" width="380" height="76" rx="14" fill="#eef0f3" stroke="#9aa3ad" stroke-width="2.5"/>
+  <text x="38" y="590" font-size="21" font-weight="700" fill="#5d6671">X · Y · Menu</text>
+  <text x="38" y="616" font-size="18.5" fill="#5d6671">Not used. You can ignore them.</text>
+  <line x1="400" y1="598" x2="457" y2="506" stroke="#777" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#dotg)"/>
+
+  <!-- ================= CALLOUTS: RIGHT ================= -->
+  <!-- right stick -->
+  <rect x="1200" y="170" width="380" height="104" rx="14" fill="#fff4ea" stroke="#e46a1d" stroke-width="3"/>
+  <rect x="1454" y="157" width="116" height="26" rx="13" fill="#e46a1d"/><text x="1512" y="176" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">MANUAL ONLY</text>
+  <text x="1218" y="206" font-size="23" font-weight="700" fill="#a34a0c">RIGHT STICK: turn</text>
+  <text x="1218" y="234" font-size="19" fill="#2b2b2b">Push left or right to turn smoothly</text>
+  <text x="1218" y="257" font-size="19" fill="#2b2b2b">on the spot. Further = faster.</text>
+  <line x1="1200" y1="230" x2="1115" y2="349" stroke="#222" stroke-width="2.5" marker-end="url(#dot)"/>
+
+  <!-- A button -->
+  <rect x="1200" y="312" width="380" height="238" rx="14" fill="#e8f7f5" stroke="#0f7f77" stroke-width="3"/>
+  <rect x="1442" y="299" width="128" height="26" rx="13" fill="#0f7f77"/><text x="1506" y="318" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">A: BOTH MODES</text>
+  <text x="1218" y="348" font-size="24" font-weight="700" fill="#0a5d57">A BUTTON</text>
+  <rect x="1212" y="362" width="356" height="86" rx="10" fill="#fff" stroke="#bfe3df"/>
+  <text x="1226" y="386" font-size="19" font-weight="700" fill="#0a5d57">TAP</text>
+  <text x="1226" y="410" font-size="18.5" fill="#2b2b2b">Closes this guide.</text>
+  <text x="1226" y="434" font-size="18.5" fill="#6b3fa0" font-weight="600">Voice mode: mic on / off.</text>
+  <rect x="1212" y="458" width="356" height="82" rx="10" fill="#fff" stroke="#bfe3df"/>
+  <text x="1226" y="482" font-size="19" font-weight="700" fill="#0a5d57">HOLD (about half a second)</text>
+  <text x="1226" y="506" font-size="18.5" fill="#2b2b2b">Shows or hides the control panel.</text>
+  <text x="1226" y="528" font-size="17" fill="#5d6671">You feel a buzz when it works.</text>
+  <line x1="1200" y1="400" x2="1146" y2="471" stroke="#222" stroke-width="2.5" marker-end="url(#dot)"/>
+
+  <!-- right unused -->
+  <rect x="1200" y="574" width="380" height="76" rx="14" fill="#eef0f3" stroke="#9aa3ad" stroke-width="2.5"/>
+  <text x="1218" y="604" font-size="21" font-weight="700" fill="#5d6671">B · Meta button</text>
+  <text x="1218" y="630" font-size="18.5" fill="#5d6671">Not used (Meta opens the headset menu).</text>
+  <line x1="1200" y1="624" x2="1071" y2="486" stroke="#777" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#dotg)"/>
+
+  <!-- ================= LEGEND + MODE NOTES ================= -->
+  <rect x="20" y="812" width="1560" height="128" rx="16" fill="#ffffff" stroke="#c9d1dc" stroke-width="2"/>
+  <rect x="44" y="830" width="22" height="22" rx="5" fill="#e46a1d"/>
+  <text x="78" y="848" font-size="20" fill="#1b2330"><tspan font-weight="700">Manual mode</tspan> (controller only): walk with the left stick, turn with the right stick. Voice is off.</text>
+  <rect x="44" y="866" width="22" height="22" rx="5" fill="#6b3fa0"/>
+  <text x="78" y="884" font-size="20" fill="#1b2330"><tspan font-weight="700">ROVR mode</tspan> (voice): just speak. The sticks do nothing. Tap A to turn the mic on, and tap again to turn it off.</text>
+  <rect x="44" y="902" width="22" height="22" rx="5" fill="#0f7f77"/>
+  <text x="78" y="920" font-size="20" fill="#1b2330"><tspan font-weight="700">Both modes:</tspan> the trigger clicks whatever the laser points at, and holding A shows or hides the panel.</text>
+</svg>

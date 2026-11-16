@@ -64,6 +64,14 @@ namespace ROVR
             }
         }
 
+        // The sentence was cut short at a halt word: what's said next starts afresh (its own halt check, its
+        // own speed words).
+        public void EndSentence()
+        {
+            haltedThisSentence = false;
+            speedThisSentence = false;
+        }
+
         public void OnFinal(string text)
         {
             haltedThisSentence = false;

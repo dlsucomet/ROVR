@@ -5,7 +5,10 @@
 //
 //   Left stick: forward / back / sideways, relative to where the user looks (kept level). The speed is
 //   in proportion to how far the stick is pushed, up to maxSpeed (2 m/s, ROVR's Normal) at full push.
-//   Right stick, left / right: a smooth turn about the head, faster the further it's pushed.
+//   Right stick, left / right: a smooth turn about the head, faster the further it's pushed; or, with
+//   snapTurning, one jump of snapDegrees per flick (some people find that more comfortable).
+//   Starting and stopping ease over a fraction of a second (acceleration / deceleration), as voice moves do;
+//   walls still stop the body at once.
 //
 // Each stretch of moving or turning is summarised for the transcript when the stick is let go
 // ("Moved 3.2 m in 2.4 s, top speed 1.9 m/s"), so Manual sessions have movement data too.
@@ -30,9 +33,17 @@ namespace ROVR
         public float maxTurnSpeed = 90f;
         [Tooltip("Stick travel ignored around the centre, so a resting thumb doesn't drift.")]
         public float deadZone = 0.15f;
+        [Tooltip("m/s² when speeding up / slowing down, so starts and stops aren't abrupt.")]
+        public float acceleration = 6f;
+        public float deceleration = 8f;
+        [Tooltip("Turn in jumps of snapDegrees, one per flick of the right stick, instead of smoothly.")]
+        public bool snapTurning;
+        public float snapDegrees = 45f;
 
         public bool IsTurning { get; private set; } // for the comfort vignette
         public bool IsMoving { get; private set; }
+        // Mostly forward or back (not sideways), for the movement vignette.
+        public bool IsMovingForwardBack { get; private set; }
 
         // A finished stretch of moving or turning, for the transcript.
         public event Action<string> OnLog;
@@ -54,6 +65,9 @@ namespace ROVR
         float _turnStart = -1f, _turned;
         int _direction = -1; // index into Directions while the left stick is pushed, else -1
         int _turnSign;       // -1 left, 1 right, 0 not turning
+        Vector3 _velocity;   // m/s, level, eased toward what the stick asks for
+        bool _snapReady = true;
+        float _snapBlinkUntil;
 
         void Awake()
         {
@@ -68,7 +82,7 @@ namespace ROVR
         void OnDisable()
         {
             Summarise(true);
-            IsTurning = IsMoving = false;
+            IsTurning = IsMoving = IsMovingForwardBack = false;
             ReportMove(-1, 0f);
             ReportTurn(0, 0f);
         }
@@ -80,25 +94,52 @@ namespace ROVR
 
             // Walk: speed in proportion to the push beyond the dead zone.
             float push = Mathf.Clamp01((Mathf.Min(1f, move.magnitude) - deadZone) / (1f - deadZone));
-            IsMoving = push > 0f && _body.enabled;
-            if (IsMoving)
+            Vector3 wanted = Vector3.zero;
+            if (push > 0f)
             {
                 Vector3 forward = LevelDirection(_head.forward, _head.forward.y > 0f ? -_head.up : _head.up);
                 Vector3 right = LevelDirection(_head.right, _head.right);
-                Vector3 dir = (forward * move.y + right * move.x).normalized;
-                float speed = push * maxSpeed;
+                wanted = (forward * move.y + right * move.x).normalized * push * maxSpeed;
+            }
+            float rate = wanted.sqrMagnitude >= _velocity.sqrMagnitude ? acceleration : deceleration;
+            _velocity = Vector3.MoveTowards(_velocity, wanted, rate * Time.deltaTime);
+            IsMoving = _velocity.sqrMagnitude > 0.0025f && _body.enabled;
+            Vector3 facing = LevelDirection(_head.forward, _head.forward.y > 0f ? -_head.up : _head.up);
+            IsMovingForwardBack = IsMoving && Mathf.Abs(Vector3.Dot(_velocity.normalized, facing)) >= 0.7f;
+            if (IsMoving)
+            {
+                float speed = _velocity.magnitude;
                 Vector3 before = transform.position;
-                _body.Move(dir * speed * Time.deltaTime);
+                _body.Move(_velocity * Time.deltaTime);
                 if (_moveStart < 0f) { _moveStart = Time.time; _moved = 0f; _topSpeed = 0f; }
                 Vector3 moved = transform.position - before;
                 moved.y = 0f;
+                if (moved.magnitude < speed * Time.deltaTime * 0.25f) _velocity = Vector3.zero; // against a wall: no speed builds up
                 _moved += moved.magnitude;
                 _topSpeed = Mathf.Max(_topSpeed, speed);
             }
+            else if (push <= 0f) _velocity = Vector3.zero;
             ReportMove(IsMoving ? DirectionOf(move, _direction) : -1, push);
 
             // Turn: left / right only.
             float t = Mathf.Abs(turn.x) <= deadZone ? 0f : Mathf.Sign(turn.x) * (Mathf.Abs(turn.x) - deadZone) / (1f - deadZone);
+            if (snapTurning)
+            {
+                // One jump per flick: past 70% of the travel turns, back near the centre re-arms.
+                if (Mathf.Abs(turn.x) < 0.3f) _snapReady = true;
+                if (_snapReady && Mathf.Abs(turn.x) > 0.7f)
+                {
+                    _snapReady = false;
+                    float degrees = Mathf.Sign(turn.x) * snapDegrees;
+                    transform.RotateAround(_head.position, Vector3.up, degrees);
+                    _snapBlinkUntil = Time.time + 0.15f;
+                    OnLog?.Invoke($"Snap turned {(degrees < 0f ? "left" : "right")} {snapDegrees:F0}°");
+                }
+                IsTurning = Time.time < _snapBlinkUntil; // the vignette blinks round the snap
+                ReportTurn(IsTurning ? (int)Mathf.Sign(turn.x) : 0, IsTurning ? 1f : 0f);
+                Summarise(false);
+                return;
+            }
             IsTurning = t != 0f;
             if (IsTurning)
             {

@@ -13,7 +13,9 @@ using System.Text;
 
 namespace ROVR
 {
-    public enum ActionType { Move, Turn, Stop, Unknown }
+    // GoTo is made by the engine only ("get me out of this room"): walk a route to a point. The LLM's schema
+    // never offers it.
+    public enum ActionType { Move, Turn, Stop, Unknown, GoTo }
     public enum DirectionType { Forward, Back, Left, Right, Up, Down, None }
 
     // How much the user asked for. The LLM only labels it; the engine decides what "small" and a step
@@ -21,7 +23,8 @@ namespace ROVR
     // of steps ("take 3 steps"), 0 for walking in steps without a count ("walk in steps to the door").
     public enum AmountType { None, Exact, Small, Steps }
 
-    public enum CommandOutcome { Completed, Halted, Blocked, NotFound }
+    // Interrupted: a newer command took over before this one finished (it is not resumed).
+    public enum CommandOutcome { Completed, Halted, Blocked, NotFound, Interrupted }
 
     // What ends a step that has a target: getting to it (the default), or just seeing it
     // ("move forward and turn left when you see the door").
@@ -61,6 +64,8 @@ namespace ROVR
         public UntilType until;   // with a condition: stop on reaching it, or as soon as it's in view
         public SpeedLevel? speed; // this step only ("slowly go to the door"); null = the current speed
         public float stepLength;  // metres per step when amount is Steps; set by the engine (MovementHabits)
+        public UnityEngine.Vector3? point;       // GoTo: where to walk to
+        public UnityEngine.Vector3? faceTowards; // GoTo: what to face on arrival, if anything
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;

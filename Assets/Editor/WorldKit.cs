@@ -43,6 +43,8 @@ public static class WorldKit
         { "HouseWallCream", new Color(0.96f, 0.91f, 0.82f) },  // House walls and ceiling: warm cream
         { "HouseFloorOak", new Color(0.66f, 0.48f, 0.32f) },   // House floor: warm oak
         { "Trim", new Color(0.36f, 0.26f, 0.19f) },            // House baseboards
+        { "LandmarkRed", new Color(0.85f, 0.12f, 0.1f) },      // Maze landmarks: the red flag
+        { "LandmarkBlue", new Color(0.2f, 0.45f, 1f) },        // and the blue lamp
     };
 
     public static void EnsureTags(params string[] tags)

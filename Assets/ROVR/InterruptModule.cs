@@ -5,10 +5,10 @@
 //
 // A halt phrase only counts when it LEADS the utterance ("stop", "wait, I mean left"), never when
 // it appears mid-sentence ("move forward until you stop at the wall" is a normal command).
-// After a halt, anything the user said is only kept when it is an explicit correction
-// ("wait, I mean left" -> halt, then "left" goes to the LLM). Anything else after a halt word
-// ("stop moving", "wait a bit") is part of the halt itself and is dropped, so it can never
-// restart movement.
+// After a halt, what follows is a new command and is kept: a correction ("wait, I mean left"), or a
+// follow-up said in the same breath ("stop, turn left"). Only words that just describe the halt itself
+// ("stop moving", "stop it", "wait a bit", "hold on a second") are dropped, so they can never restart
+// movement. (On the headset the halt also ends the sentence there, so what's said next is its own sentence.)
 //
 // Caveat: the real design assumes a continuous streaming ASR buffer so a halt can land
 // mid-utterance. This text stub only sees a complete string, so it's the closest testable analog.
@@ -28,7 +28,7 @@ namespace ROVR
         // Halts; whatever follows is only kept when it starts with a correction cue.
         static readonly string[] HaltLeads =
         {
-            "hold on", "hang on", "stop", "halt", "cancel", "freeze", "wait", "whoa", "oops", "ops",
+            "hold on", "hang on", "stop", "halt", "cancel", "freeze", "emergency", "wait", "whoa", "oops", "ops",
             // Whisper often hears a short "ops" as one of these (seen in testing: "Op stop", "Off stop").
             "op", "oop", "off"
         };
@@ -58,10 +58,29 @@ namespace ROVR
                 string rest = t.Substring(lead.Length).Trim();
                 // "Wait, go back" is a correction too: stop, then undo the move (GoBackWords).
                 bool correction = StartsWithAny(rest, CorrectionCues) || GoBackWords.IsGoBack(rest);
-                return new InterruptResult { isHalt = true, remainder = correction ? StripCues(rest) : string.Empty };
+                bool followUp = !correction && IsCommand(rest);
+                return new InterruptResult { isHalt = true, remainder = correction || followUp ? StripCues(rest) : string.Empty };
             }
 
             return none;
+        }
+
+        // Words that start a movement command ("turn left", "go to the door", "take two steps").
+        static readonly string[] CommandStarts =
+        {
+            "turn", "move", "go", "walk", "step", "take", "face", "head", "back", "look", "rotate", "come", "forward",
+            "left", "right", "keep", "bring", "get", "slowly", "quickly", "sidestep", "strafe"
+        };
+
+        // Whether what follows a halt word is a command of its own, not more of the halt ("moving", "it",
+        // "a bit", "for a second", "right there", "right now").
+        static bool IsCommand(string rest)
+        {
+            if (rest.Length == 0) return false;
+            if (StartsWithAny(rest, new[] { "moving", "going", "walking", "turning", "it", "that", "there", "now", "please",
+                                            "a bit", "a second", "a sec", "a moment", "for a", "right there", "right now", "right here", "here" }))
+                return false;
+            return StartsWithAny(rest, CommandStarts) || QuickCommands.TryParse(rest) != null;
         }
 
         static string Normalize(string s)
