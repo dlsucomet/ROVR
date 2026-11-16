@@ -146,12 +146,13 @@ public class StudySession : MonoBehaviour
     private void Row(string evt, string input, string system, string result, float push)
     {
         if (_log == null) return;
-        Here(out Vector3 local, out float heading);
-        _log.Row(evt, CurrentTask != null ? Objective : 0, input, system, result, push, local, heading);
+        Here(out Vector3 local, out float heading, out float bodyHeading);
+        _log.Row(evt, CurrentTask != null ? Objective : 0, input, system, result, push, local, heading, bodyHeading);
     }
 
-    // The head's spot relative to the world's start (metres, world axes) and which way it faces (0 = north).
-    private void Here(out Vector3 local, out float heading)
+    // The head's spot relative to the world's start (metres, world axes), which way it faces (0 = north), and
+    // which way the body faces.
+    private void Here(out Vector3 local, out float heading, out float bodyHeading)
     {
         Transform head = Camera.main != null ? Camera.main.transform : _panel.playerBody;
         Transform start = _panel.StartOf(World);
@@ -159,6 +160,8 @@ public class StudySession : MonoBehaviour
         local.y = 0f;
         Vector3 f = head.forward;
         heading = Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+        Vector3 b = _panel.playerBody != null ? _panel.playerBody.forward : f;
+        bodyHeading = Mathf.Atan2(b.x, b.z) * Mathf.Rad2Deg;
     }
 
     private bool Reached(StudyTask task)
@@ -331,9 +334,9 @@ public class StudySession : MonoBehaviour
     private void EndWorld(string result, bool keepIfEmpty)
     {
         if (_log == null) return;
-        Here(out Vector3 local, out float heading);
+        Here(out Vector3 local, out float heading, out float bodyHeading);
         bool wrote = _log.ClockStarted || keepIfEmpty;
-        _log.End(result, CurrentTask != null ? Objective : 0, local, heading, keepIfEmpty);
+        _log.End(result, CurrentTask != null ? Objective : 0, local, heading, bodyHeading, keepIfEmpty);
         Say($"{World}: {result}" + (wrote ? $" (saved {_log.FileName}, {_log.Rows} rows)" : " (nothing to save: no action)"));
         _log = null;
         _banner.Hide();

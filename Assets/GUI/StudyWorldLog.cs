@@ -17,10 +17,13 @@
 //           talk that isn't a command, so not sent to the LLM: SideTalk), command (system = what
 //           it will do), question, notice, error, halt, speed, move_end (result = completed / halted /
 //           blocked / not found), mic (input = on / off)
+//   Both:   jump, minimap (input = shown / grabbed / let go; system = the world, the hand or controller, or
+//           where it was put), pointer (input = the object a controller's ray came to rest on)
 //   Trad:   move (input = forward, forward-right, right, back-right, back, back-left, left, forward-left or
 //           stopped; push = how far the left stick is pushed, 0-1), turn (input = left / right / stopped)
 // x_m / z_m: metres from the world's start point, in the world's own axes (z = north); heading_deg: where
-// the participant faces, 0 = north, 90 = east.
+// the participant's head faces, 0 = north, 90 = east; body_heading_deg: where the body faces (it turns with
+// ROVR's and the stick's turns, not when the head looks round), so turns can be told from looking.
 //
 // Each row is written to the file at once (flushed), so a crash loses nothing. When the world ends the
 // whole file goes to the ROVR bridge on the PC (StudyUploads), which saves it in Bridge/logs/study/. Files
@@ -40,7 +43,7 @@ using UnityEngine.Networking;
 public class StudyWorldLog
 {
     public const string Header = "participant_id,condition,sequence_id,sequence,world,world_position,run,t_s,clock_time," +
-                                 "event,objective,input,system,result,push,x_m,z_m,heading_deg";
+                                 "event,objective,input,system,result,push,x_m,z_m,heading_deg,body_heading_deg";
 
     public static string Folder
     {
@@ -104,7 +107,7 @@ public class StudyWorldLog
         Open();
     }
 
-    public void Row(string evt, int objective, string input, string system, string result, float push, Vector3 local, float heading)
+    public void Row(string evt, int objective, string input, string system, string result, float push, Vector3 local, float heading, float bodyHeading)
     {
         if (_writer == null) return;
         var line = new StringBuilder(_prefix, 160);
@@ -119,6 +122,7 @@ public class StudyWorldLog
         line.Append(',').Append(local.x.ToString("F2", CultureInfo.InvariantCulture));
         line.Append(',').Append(local.z.ToString("F2", CultureInfo.InvariantCulture));
         line.Append(',').Append(Mathf.Repeat(heading, 360f).ToString("F0", CultureInfo.InvariantCulture));
+        line.Append(',').Append(Mathf.Repeat(bodyHeading, 360f).ToString("F0", CultureInfo.InvariantCulture));
         try
         {
             _writer.WriteLine(line.ToString());
@@ -133,11 +137,11 @@ public class StudyWorldLog
 
     // The last row, then the file is closed and sent to the PC. A run whose clock never started has no
     // file unless keepIfEmpty, in which case it gets just the header and this row.
-    public void End(string result, int objective, Vector3 local, float heading, bool keepIfEmpty)
+    public void End(string result, int objective, Vector3 local, float heading, float bodyHeading, bool keepIfEmpty)
     {
         if (!ClockStarted && !keepIfEmpty) return;
         if (_writer == null && !ClockStarted) Open();
-        Row("world_end", objective, "", "", result, -1f, local, heading);
+        Row("world_end", objective, "", "", result, -1f, local, heading, bodyHeading);
         try { _writer?.Dispose(); } catch (IOException) { }
         _writer = null;
         StudyUploads.Queue(FilePath);

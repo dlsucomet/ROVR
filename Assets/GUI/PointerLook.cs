@@ -30,7 +30,13 @@ public class PointerLook : MonoBehaviour
         public Transform dot;
         public Renderer dotRenderer;
         public TextMesh name;
+        public string candidate = "", reported = ""; // for PointedAt
+        public float since;
     }
+
+    // What a pointer has come to rest on (a new name, held for PointedSettleSeconds), for the study's logs.
+    public static event System.Action<string> PointedAt;
+    const float PointedSettleSeconds = 0.3f;
 
     readonly List<Ray> _rays = new List<Ray>();
     Transform _head;
@@ -88,7 +94,7 @@ public class PointerLook : MonoBehaviour
             }
             if (ray.dot == null) Make(ray);
             ray.dot.gameObject.SetActive(shown);
-            if (!shown) { ray.name.gameObject.SetActive(false); continue; }
+            if (!shown) { ray.name.gameObject.SetActive(false); Settle(ray, ""); continue; }
 
             float distance = _head != null ? Vector3.Distance(_head.position, end) : 1f;
             ray.dot.position = end;
@@ -96,6 +102,7 @@ public class PointerLook : MonoBehaviour
             ray.dotRenderer.material.color = line.endColor.a > 0.01f ? new Color(line.endColor.r, line.endColor.g, line.endColor.b, 1f) : Hit;
 
             if (look) ray.name.text = NameAt(start, end);
+            Settle(ray, ray.name.text);
             bool named = ray.name.text.Length > 0 && _head != null;
             ray.name.gameObject.SetActive(named);
             if (named)
@@ -105,6 +112,18 @@ public class PointerLook : MonoBehaviour
                 ray.name.transform.localScale = Vector3.one * 0.012f * Mathf.Max(0.5f, distance);
             }
         }
+    }
+
+    // Reports the ray's object once it has stayed on it a moment, and again only after it moved to another.
+    void Settle(Ray ray, string now)
+    {
+        if (now != ray.candidate) { ray.candidate = now; ray.since = Time.time; return; }
+        if (now.Length > 0 && now != ray.reported && Time.time - ray.since >= PointedSettleSeconds)
+        {
+            ray.reported = now;
+            PointedAt?.Invoke(now);
+        }
+        if (now.Length == 0) ray.reported = "";
     }
 
     static Vector3 Point(LineRenderer line, int i)

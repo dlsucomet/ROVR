@@ -70,6 +70,10 @@ public class WorldMinimap : MonoBehaviour
     }
 
     readonly List<Map> _maps = new List<Map>();
+
+    // For the study's logs (VRControlPanel): ("shown", "House"), ("grabbed", "controller" / "hand"),
+    // ("let go", where it was put relative to the eyes).
+    public static event System.Action<string, string> Logged;
     Transform _head;
     GameObject _canvasObject;
     RectTransform _mapPivot, _arrow, _goal;
@@ -174,6 +178,7 @@ public class WorldMinimap : MonoBehaviour
         _grab.trackRotation = false; // it always turns to face the eyes
         _grab.useDynamicAttach = true; // held where it was grabbed, not snapped to its middle
         _grab.retainTransformParent = true;
+        _grab.selectEntered.AddListener(_ => Logged?.Invoke("grabbed", "controller"));
         _grab.selectExited.AddListener(_ => Placed());
     }
 
@@ -282,6 +287,7 @@ public class WorldMinimap : MonoBehaviour
                 _mapYaw = HeadYaw();
                 _lastBodyYaw = player.eulerAngles.y;
                 PlaceNow();
+                Logged?.Invoke("shown", now.world);
             }
         }
         if (now == null) return;
@@ -365,6 +371,7 @@ public class WorldMinimap : MonoBehaviour
         if (d > 1.2f) local *= 1.2f / d;
         if (d < 0.3f) local *= 0.3f / Mathf.Max(0.01f, d);
         _offset = local;
+        Logged?.Invoke("let go", $"{local.x:F2} m right, {local.y:F2} m up, {local.z:F2} m ahead of the eyes");
     }
 
     // Pinching the map with a tracked hand moves it with the pinch.
@@ -388,6 +395,7 @@ public class WorldMinimap : MonoBehaviour
             if (_collider == null || Vector3.Distance(_collider.ClosestPoint(point), point) > PinchGrabDistance) continue;
             _pinchHand = hand;
             _pinchFrom = point;
+            Logged?.Invoke("grabbed", "hand");
             return;
         }
     }

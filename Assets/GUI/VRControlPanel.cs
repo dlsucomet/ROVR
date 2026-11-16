@@ -182,6 +182,11 @@ public class VRControlPanel : MonoBehaviour
         _gravity = playerBody.GetComponent<PlayerGravity>();
         if (_gravity == null) _gravity = playerBody.gameObject.AddComponent<PlayerGravity>();
 
+        // For the study's logs: jumps, the minimap, what the pointer rests on.
+        _gravity.OnJumped += HandleJumped;
+        WorldMinimap.Logged += HandleMinimap;
+        PointerLook.PointedAt += HandlePointedAt;
+
         // The Manual condition's stick movement, on the same body; only on in Manual (SetCondition).
         _manual = playerBody.GetComponent<ManualLocomotion>();
         if (_manual == null) _manual = playerBody.gameObject.AddComponent<ManualLocomotion>();
@@ -1090,6 +1095,25 @@ public class VRControlPanel : MonoBehaviour
         _session?.Note("notice", "", notice, "");
     }
 
+    private void HandleJumped()
+    {
+        Record("JUMP", "Jumped");
+        _session?.Note("jump", "", "", "");
+    }
+
+    // ("shown", "House"), ("grabbed", "hand"), ("let go", where).
+    private void HandleMinimap(string what, string details)
+    {
+        Record("MINIMAP", what + ": " + details);
+        _session?.Note("minimap", what, details, "");
+    }
+
+    private void HandlePointedAt(string name)
+    {
+        Record("POINTER", "On the " + name);
+        _session?.Note("pointer", name, "", "");
+    }
+
     // On the way to an object, something was in the way and ROVR goes round it.
     private void HandleDetour(string what)
     {
@@ -1289,6 +1313,9 @@ public class VRControlPanel : MonoBehaviour
             _resolver.OnError -= HandleError;
             _resolver.OnIgnored -= HandleIgnored;
         }
-        if (_navigation != null) _navigation.OnCommandFinished -= HandleCommandFinished;
+        if (_navigation != null) { _navigation.OnCommandFinished -= HandleCommandFinished; _navigation.OnDetour -= HandleDetour; }
+        if (_gravity != null) _gravity.OnJumped -= HandleJumped;
+        WorldMinimap.Logged -= HandleMinimap;
+        PointerLook.PointedAt -= HandlePointedAt;
     }
 }

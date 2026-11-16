@@ -51,8 +51,12 @@ namespace ROVR
             _verticalSpeed = jumpSpeed;
             _jumpedAt = Time.time;
             IsGrounded = false;
+            OnJumped?.Invoke();
             return true;
         }
+
+        // Each jump, for the study's logs.
+        public event System.Action OnJumped;
 
         // After a teleport: no fall speed carries over, and the new spot is the floor to come back to.
         public void Settle()
