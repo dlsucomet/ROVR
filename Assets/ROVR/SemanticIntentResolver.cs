@@ -57,6 +57,19 @@ namespace ROVR
         string pendingClarification;
         float clarificationTime;
 
+        // The last few exchanges (what the user said, what ROVR did or asked, how it ended), each forgotten
+        // stateTimeoutSeconds after it happened. They go to the LLM, which may take a target, distance or angle
+        // from them only when the user points back ("again", "the same", "back to the tree"): the pilots wanted
+        // ROVR to remember, but a "move forward" that inherited the last target was the old problem.
+        public const int RecentExchanges = 3;
+        class Exchange
+        {
+            public float time;
+            public string said, did, outcome;
+            public NavigationCommand command; // null when ROVR asked something instead
+        }
+        readonly List<Exchange> recent = new List<Exchange>();
+
         const float LookDegrees = 15f; // "that one" = the option within this of the middle of the view
         static readonly Transform[] NoObjects = new Transform[0];
 
@@ -103,7 +116,9 @@ PREVIOUS COMMAND is only for follow-ups: 'a bit more', 'more' or 'again' repeat 
 
 WHICH ONE. When the user singles out one of several objects, set which: left, right, middle, nearest (the closer one), farthest, or looking (that one, this one, that tree: the one they are looking at); or set which_near to the object it is next to ('the tree by the pond' = pond). Otherwise both are empty strings. When you asked the user which one and they only answer that ('the left one', 'that one', 'the one by the pond'), return no steps and set which or which_near.
 
-Each command is new: take a target, distance or angle only from the user's words in this command, never from the previous command, except for the follow-ups above. If the command seems cut off or you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
+RECENT EXCHANGES are the last few things the user said in the past minute and what you did (oldest first). Use them only when the command points back to one of them: 'again', 'the same', 'do that twice', 'back to the tree', 'the other one', 'it', 'that'. Then you may take its target, distance or angle. 'Go back to the rock' means go to the rock again: direction forward with condition rock, not a backward move.
+
+Each command is new: take a target, distance or angle only from the user's words in this command, never from the previous command or the recent exchanges, except for the follow-ups above and commands that point back. If the command seems cut off or you cannot tell what the user wants, return no steps and put a short question in clarification. Otherwise clarification is an empty string.
 
 EXAMPLES
 Command: move forward 5 meters
@@ -323,6 +338,18 @@ Command: go to the lamp (no lamp in the visible objects list)
                 return;
             }
 
+            // "Turn around more", "turn a bit more", "keep turning": a little further the same way as the last
+            // turn, not another 180 (a pilot said "turn around more" after "turn right a little" and got 180).
+            var moreTurn = MoreTurn(utterance);
+            if (moreTurn != null)
+            {
+                requestId++;
+                IsThinking = false;
+                ClearChoice();
+                Proceed(moreTurn, new List<GroundedObject>(), utterance);
+                return;
+            }
+
             // The primary movements, read from the words at once (no model round trip), so they take over
             // from whatever is running straight away.
             var quick = QuickCommands.TryParse(utterance);
@@ -345,6 +372,8 @@ Command: go to the lamp (no lamp in the visible objects list)
             }
 
             Resolve(utterance);
+        }
+
         // ROVR asked something ("Which rock?", "More of what?") a moment ago and the user may be answering.
         bool AwaitingAnswer()
         {
@@ -352,6 +381,26 @@ Command: go to the lamp (no lamp in the visible objects list)
                 || (!string.IsNullOrEmpty(pendingClarification) && Time.time - clarificationTime <= stateTimeoutSeconds);
         }
 
+        static readonly System.Text.RegularExpressions.Regex MoreTurnWords = new System.Text.RegularExpressions.Regex(
+            @"^(?:okay |ok |now |so )*(?:(?:turn|spin|rotate)(?: a ?round)?(?: a bit| a little| a little bit| some)? (?:more|further)|keep turning)(?: please)?$");
+
+        // A small turn the same way as the last turn still remembered, or null (no recent turn, or other words).
+        NavigationCommand MoreTurn(string utterance)
+        {
+            if (!MoreTurnWords.IsMatch(string.Join(" ", WordsOf(utterance)))) return null;
+            var exchanges = Recent();
+            for (int i = exchanges.Count - 1; i >= 0; i--)
+            {
+                var c = exchanges[i].command;
+                if (c == null || c.steps == null) continue;
+                for (int j = c.steps.Length - 1; j >= 0; j--)
+                {
+                    if (c.steps[j].action != ActionType.Turn) continue;
+                    var dir = c.steps[j].direction == DirectionType.Left ? DirectionType.Left : DirectionType.Right;
+                    return new NavigationCommand { steps = new[] { new NavigationStep { action = ActionType.Turn, direction = dir, amount = AmountType.Small, condition = string.Empty, until = UntilType.Reach } } };
+                }
+            }
+            return null;
         }
 
         static readonly System.Text.RegularExpressions.Regex LeaveRoomWords = new System.Text.RegularExpressions.Regex(
@@ -499,6 +548,15 @@ Command: go to the lamp (no lamp in the visible objects list)
             var sb = new System.Text.StringBuilder();
             sb.Append("Visible objects: ").Append(visibleJson).Append('\n');
 
+            var exchanges = Recent();
+            if (exchanges.Count > 0)
+            {
+                sb.Append("Recent exchanges, oldest first:\n");
+                foreach (var e in exchanges)
+                    sb.Append("- ").Append(Mathf.RoundToInt(Time.time - e.time)).Append(" s ago the user said \"").Append(e.said)
+                      .Append("\": you ").Append(e.did).Append(e.outcome.Length > 0 ? " (" + e.outcome + ")" : "").Append('\n');
+            }
+
             if (lastCommand != null && Time.time - lastCommandTime <= stateTimeoutSeconds)
             {
                 string status = lastOutcome.HasValue ? lastOutcome.Value.ToString().ToLowerInvariant() : "running";
@@ -553,6 +611,7 @@ Command: go to the lamp (no lamp in the visible objects list)
 
             if (command.IsClarification)
             {
+                Remember(utterance, "asked \"" + command.clarificationPrompt + "\"", null);
                 Ask(command.clarificationPrompt);
                 return;
             }
@@ -561,8 +620,52 @@ Command: go to the lamp (no lamp in the visible objects list)
             lastOutcome = null;
             lastCommandTime = Time.time;
             pendingClarification = null;
+            Remember(utterance, Short(command), command);
 
             controller.Execute(command);
+        }
+
+        void Remember(string said, string did, NavigationCommand command)
+        {
+            if (string.IsNullOrWhiteSpace(said)) return; // a command resumed after "which one?" is already there
+            recent.Add(new Exchange { time = Time.time, said = said.Trim(), did = did, command = command, outcome = command != null ? "running" : "" });
+            while (recent.Count > RecentExchanges) recent.RemoveAt(0);
+        }
+
+        // The exchanges still remembered, oldest first.
+        List<Exchange> Recent()
+        {
+            recent.RemoveAll(e => Time.time - e.time > stateTimeoutSeconds);
+            return recent;
+        }
+
+        // "turned left 10°", "moved forward to the tree", "took 2 steps right": a short line for the LLM.
+        static string Short(NavigationCommand command)
+        {
+            if (!string.IsNullOrEmpty(command.summary)) return command.summary.ToLowerInvariant();
+            var parts = new List<string>();
+            foreach (var s in command.steps)
+            {
+                string dir = s.direction == DirectionType.None ? "" : " " + s.direction.ToString().ToLowerInvariant();
+                string what;
+                switch (s.action)
+                {
+                    case ActionType.Turn:
+                        what = "turn" + dir + (s.amount == AmountType.Exact ? " " + Mathf.RoundToInt(s.magnitude) + " degrees"
+                                             : s.amount == AmountType.Small ? " a little" : "");
+                        break;
+                    case ActionType.Move:
+                        what = s.InSteps ? "take " + Mathf.RoundToInt(s.magnitude) + " steps" + dir
+                             : "move" + dir + (s.amount == AmountType.Exact ? " " + s.magnitude.ToString("0.#") + " m"
+                                             : s.amount == AmountType.Small ? " a bit" : "");
+                        break;
+                    case ActionType.Stop: what = "stop"; break;
+                    default: what = s.action.ToString().ToLowerInvariant(); break;
+                }
+                if (s.HasCondition) what += (s.action == ActionType.Turn ? " to face the " : " to the ") + s.condition;
+                parts.Add(what);
+            }
+            return string.Join(", then ", parts);
         }
 
         void Ask(string question)
@@ -764,6 +867,12 @@ Command: go to the lamp (no lamp in the visible objects list)
         static readonly System.Text.RegularExpressions.Regex SaysNumber = new System.Text.RegularExpressions.Regex(
             @"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|half|quarter|couple|few|dozen)\b");
         static readonly string[] Pointing = { "it", "that", "this", "there", "them" };
+        // Words that point back to an earlier exchange (WordsOf: lower case, single spaces).
+        static readonly string[] BackReferences =
+        {
+            "again", "the same", "same thing", "twice", "three times", "repeat", "back to", "once more", "do that",
+            "like before", "as before", "the other one", "like last time"
+        };
 
         // The model was seen to copy the previous command's target into "move forward" (so it stopped at
         // once, or walked off toward the old target) and its distance or angle into a new command. Each
@@ -774,6 +883,9 @@ Command: go to the lamp (no lamp in the visible objects list)
         {
             if (string.IsNullOrEmpty(utterance)) return;
             string text = " " + string.Join(" ", WordsOf(utterance)) + " ";
+            // "Do that again", "the same", "back to the tree": the user points back to a recent exchange, so
+            // what the model took from it stays (RECENT EXCHANGES in the prompt).
+            if (Recent().Count > 0 && Array.Exists(BackReferences, w => text.Contains(" " + w + " "))) return;
             var known = grounding.KnownNames();
             var said = ObjectVocabulary.WordsIn(utterance, known);
             bool pointing = Array.Exists(Pointing, w => text.Contains(" " + w + " "));
@@ -1177,6 +1289,8 @@ Command: go to the lamp (no lamp in the visible objects list)
 
         void HandleFinished(NavigationCommand command, CommandOutcome outcome)
         {
+            foreach (var e in recent)
+                if (e.command == command) e.outcome = outcome == CommandOutcome.NotFound ? "not found" : outcome.ToString().ToLowerInvariant();
             if (command != lastCommand) return; // an older command being superseded
 
             lastOutcome = outcome;
