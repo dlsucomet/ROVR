@@ -2,7 +2,10 @@
 // Splits live microphone audio into sentences. A sentence ends only after DeadAirSec of silence, so
 // a speaker who pauses mid-sentence ("move forward... five meters") isn't cut off. While a sentence
 // is being spoken, its audio so far is handed out every PartialEverySec and at each short pause, so
-// a halt word ("stop", "ops") can act before the sentence is finished.
+// a halt word ("stop", "ops") can act before the sentence is finished. After EarlyEndSec of silence (less
+// than DeadAirSec) the sentence so far is also handed out once as a pause (OnPause): if it's already a
+// whole open-ended move ("move forward"), the caller acts on it then and ends the sentence (EndNow),
+// instead of waiting out the full DeadAirSec.
 // Plain C# with no Unity types, so it can be unit-tested; VRControlPanel feeds it microphone audio.
 //
 // Voice is told apart from silence by loudness: each 0.1 s frame is compared with the room's noise
@@ -15,6 +18,7 @@ namespace ROVR
     public class SpeechSegmenter
     {
         public float DeadAirSec = 1.5f;      // silence that ends a sentence
+        public float EarlyEndSec = 0.6f;     // silence after which the sentence so far is handed out as a pause (0: never)
         public float PartialEverySec = 0.5f; // how often the sentence so far is handed out while speaking
         public float PreRollSec = 0.3f;      // audio kept from just before speech starts, so the first word isn't clipped
         public float MinSpeechSec = 0.2f;    // shorter bursts (a click, a tap) don't start a sentence
@@ -29,10 +33,16 @@ namespace ROVR
         const int TrailingSilenceFramesKept = 3;
 
         public event Action<float[]> OnPartial;  // the sentence so far (for early halts and live captions)
+        public event Action<float[]> OnPause;    // the sentence so far, once, after EarlyEndSec of silence
         public event Action<float[]> OnSentence; // a finished sentence
 
         public int SampleRate { get; }
         public bool InSentence { get; private set; }
+
+        // Which sentence this is (counts up as each starts), and how many voiced frames it has had: together
+        // they tell the caller whether the speaker carried on after a pause.
+        public int SentenceNumber { get; private set; }
+        public int VoicedFrames { get; private set; }
 
         readonly int frameSize;
         readonly float[] frame;
@@ -94,6 +104,13 @@ namespace ROVR
             return false;
         }
 
+        // Ends the sentence in progress without handing it out: it was acted on at a pause (OnPause), so the
+        // silence after it isn't a sentence, and what's said next is a new one.
+        public void EndNow()
+        {
+            Reset();
+        }
+
         // Drops the sentence in progress (the cancel button). What the room sounds like is kept, since it
         // hasn't changed.
         public void Reset()
@@ -120,6 +137,8 @@ namespace ROVR
                 if (onsetFrames < Math.Max(1, Frames(MinSpeechSec))) return;
 
                 InSentence = true;
+                SentenceNumber++;
+                VoicedFrames = onsetFrames;
                 sentence.AddRange(recent);
                 recent.Clear();
                 onsetFrames = 0;
@@ -131,8 +150,16 @@ namespace ROVR
 
             sentence.Add(f);
             framesSincePartial++;
-            if (voiced) { silenceFrames = 0; speechSincePartial++; }
+            if (voiced) { silenceFrames = 0; speechSincePartial++; VoicedFrames++; }
             else silenceFrames++;
+
+            // A pause long enough that the sentence may be complete ("move forward."), well before DeadAirSec.
+            int early = Frames(EarlyEndSec);
+            if (EarlyEndSec > 0f && early < Frames(DeadAirSec) && silenceFrames == early)
+            {
+                int cut = Math.Max(0, silenceFrames - TrailingSilenceFramesKept);
+                OnPause?.Invoke(Join(sentence.GetRange(0, sentence.Count - Math.Min(cut, sentence.Count - 1))));
+            }
 
             if (silenceFrames >= Frames(DeadAirSec) || sentence.Count >= Frames(MaxSentenceSec))
             {

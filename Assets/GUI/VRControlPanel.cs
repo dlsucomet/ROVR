@@ -17,6 +17,9 @@ public class VRControlPanel : MonoBehaviour
     [Tooltip("Seconds of silence that end a sentence. Shorter pauses stay in the same sentence. " +
              "Halt words (stop, ops) act before this, while the sentence is still being spoken.")]
     public float deadAirSec = 1.5f;
+    [Tooltip("Seconds of silence after which an open-ended move already said in full (\"move forward\", \"move back\") " +
+             "runs, without waiting out deadAirSec. Turns and counted moves always wait. 0 turns this off.")]
+    public float earlyEndSec = 0.6f;
     [Tooltip("Log every transcription to the Console: the sentence so far while speaking, and the finished sentence.")]
     public bool logSpeech;
     [Tooltip("Log each command sent to the LLM (what was heard and the objects in view) and its reply.")]
@@ -106,6 +109,8 @@ public class VRControlPanel : MonoBehaviour
     private SpeechSegmenter _segmenter;
     private readonly System.Collections.Generic.Queue<float[]> _pendingSentences = new System.Collections.Generic.Queue<float[]>();
     private float[] _pendingPartial; // the newest sentence-so-far waiting for Whisper
+    private float[] _pendingPause;   // the sentence so far at an earlyEndSec pause, waiting for Whisper
+    private int _pauseSentence, _pauseVoiced; // which sentence that pause was in, and its voiced frames then
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
     private string _world;            // the world the player was last teleported to ("Plain"), for Whisper's prompt
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
@@ -459,6 +464,7 @@ public class VRControlPanel : MonoBehaviour
         // ends here (as if the speaker had paused) and goes on to Whisper, and anything already with
         // Whisper or the LLM finishes. Only Cancel (B) throws speech away.
         _pendingPartial = null;
+        _pendingPause = null;
 
         if (_isMicMuted)
         {
@@ -592,14 +598,24 @@ public class VRControlPanel : MonoBehaviour
                 if (!_speechStarted) NoteSpeechStarted();
                 QueueTranscription(audio, false);
             };
+            _segmenter.OnPause += audio =>
+            {
+                if (!useLLM) return;
+                _pendingPause = audio;
+                _pauseSentence = _segmenter.SentenceNumber;
+                _pauseVoiced = _segmenter.VoicedFrames;
+                if (!_transcribing) TranscribeQueued();
+            };
             _segmenter.OnSentence += audio =>
             {
                 _speechStarted = false;
+                _pendingPause = null; // the whole sentence is here: it decides
                 Record("SPEECH", $"Sentence ended: {Seconds(audio):F1} s, queued for Whisper" + (_transcribing ? " (Whisper is busy, it waits)" : ""));
                 QueueTranscription(audio, true);
             };
         }
         _segmenter.DeadAirSec = deadAirSec;
+        _segmenter.EarlyEndSec = earlyEndSec;
         _segmenter.AddSamples(samples);
     }
 
@@ -631,16 +647,19 @@ public class VRControlPanel : MonoBehaviour
     private async void TranscribeQueued()
     {
         _transcribing = true;
-        while (_pendingSentences.Count > 0 || _pendingPartial != null)
+        while (_pendingSentences.Count > 0 || _pendingPause != null || _pendingPartial != null)
         {
             bool isSentence = _pendingSentences.Count > 0;
-            float[] audio = isSentence ? _pendingSentences.Dequeue() : _pendingPartial;
-            if (!isSentence) _pendingPartial = null;
+            bool isPause = !isSentence && _pendingPause != null;
+            float[] audio = isSentence ? _pendingSentences.Dequeue() : isPause ? _pendingPause : _pendingPartial;
+            int pauseSentence = _pauseSentence, pauseVoiced = _pauseVoiced;
+            if (isPause) { _pendingPause = null; _pendingPartial = null; } // the pause piece covers the partial too
+            else if (!isSentence) _pendingPartial = null;
             int generation = _speechGeneration;
             int sampleRate = _segmenter.SampleRate;
             float[] padded = PadForWhisper(audio, sampleRate);
 
-            string piece = isSentence ? "sentence" : "so-far piece";
+            string piece = isSentence ? "sentence" : isPause ? "pause piece" : "so-far piece";
             float whisperStarted = Time.realtimeSinceStartup;
             string text = null;
             string where = "on the PC";
@@ -712,9 +731,31 @@ public class VRControlPanel : MonoBehaviour
                 }
                 OnSentenceHeard(text, Seconds(audio), whisperSeconds, where);
             }
+            else if (isPause) OnPauseHeard(text, pauseSentence, pauseVoiced, Seconds(audio), whisperSeconds, where);
             else OnPartialHeard(text);
         }
         _transcribing = false;
+    }
+
+    // The sentence so far at an earlyEndSec pause. If the speaker hasn't carried on and it's a whole
+    // open-ended move ("move forward", "move back"), it runs now and the sentence ends here, as if the full
+    // deadAirSec had passed; anything else ("turn left", "move forward two steps", or more words coming)
+    // waits for the sentence to end as usual.
+    private void OnPauseHeard(string text, int sentenceNumber, int voicedFrames, float speechSeconds, float whisperSeconds, string where)
+    {
+        OnPartialHeard(text); // the live caption and the halt check, as for any piece of the sentence
+        if (_segmenter == null || !_segmenter.InSentence || _segmenter.SentenceNumber != sentenceNumber
+            || _segmenter.VoicedFrames != voicedFrames)
+            return; // they carried on speaking, or the sentence already ended: the whole sentence decides
+        string clean = TranscriptFilter.Clean(text);
+        // "Go back" reads as a move back, but it's the undo (GoBackWords): it waits for the whole sentence.
+        if (clean == null || GoBackWords.IsGoBack(clean) || !QuickCommands.IsOpenEndedMove(QuickCommands.TryParse(clean))) return;
+
+        _segmenter.EndNow();
+        _speechStarted = false;
+        _router?.EndSentence();
+        Record("SPEECH", $"Sentence ended early: an open-ended move after a {earlyEndSec:F1} s pause ({speechSeconds:F1} s of speech)");
+        OnSentenceHeard(text, speechSeconds, whisperSeconds, where);
     }
 
     private float Seconds(float[] audio)
@@ -959,6 +1000,7 @@ public class VRControlPanel : MonoBehaviour
         _speechGeneration++;
         _pendingSentences.Clear();
         _pendingPartial = null;
+        _pendingPause = null;
         _segmenter?.Reset();
         _speechStarted = false;
         _cutByMute = false;
@@ -995,6 +1037,7 @@ public class VRControlPanel : MonoBehaviour
         _speechGeneration++;
         _pendingSentences.Clear();
         _pendingPartial = null;
+        _pendingPause = null;
         _segmenter?.Reset();
         _speechStarted = false;
         _cutByMute = false;

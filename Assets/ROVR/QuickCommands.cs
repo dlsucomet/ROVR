@@ -128,6 +128,17 @@ namespace ROVR
             return null;
         }
 
+        // An open-ended move ("move forward", "move back", "keep going", "move left"): no distance, no count,
+        // no target. These may run as soon as the speaker pauses (SpeechSegmenter.OnPause), since whatever
+        // they say next takes over smoothly. A turn or a counted move waits for the whole sentence: "turn
+        // left, 60 degrees" must not turn 90 first.
+        public static bool IsOpenEndedMove(NavigationCommand command)
+        {
+            if (command == null || command.steps == null || command.steps.Length != 1) return false;
+            var s = command.steps[0];
+            return s.action == ActionType.Move && s.amount == AmountType.None && string.IsNullOrEmpty(s.condition);
+        }
+
         static NavigationCommand One(NavigationStep step)
         {
             return new NavigationCommand { steps = new[] { step } };
