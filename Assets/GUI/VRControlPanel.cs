@@ -894,6 +894,7 @@ public class VRControlPanel : MonoBehaviour
     // The speed in use ("faster" / "slower" by voice), and says so.
     private void ShowSpeed(SpeedLevel level, bool announce)
     {
+        if (announce) _session?.Practice?.ObserveSpeed(level);
         moveSpeed = FixedPhraseSpeeds[(int)level];
         if (!announce) return;
         SetOutputFeedback("Speed: " + level.ToString().ToLower(), true);
@@ -1068,6 +1069,7 @@ public class VRControlPanel : MonoBehaviour
     private void HandleCommandResolved(NavigationCommand command)
     {
         if (command.IsClarification) return;
+        _session?.Practice?.Observe(command);
         string description = Describe(command);
         // Understood and started; a command still running is interrupted by it (and not resumed).
         bool interrupting = _navigation != null && _navigation.IsBusy;
@@ -1134,6 +1136,8 @@ public class VRControlPanel : MonoBehaviour
     {
         string result = outcome == CommandOutcome.NotFound ? "not found" : outcome.ToString().ToLowerInvariant();
         _session?.Note("move_end", "", command != null ? Describe(command) : "", result);
+        if (outcome == CommandOutcome.Halted && command != null && System.Array.Exists(command.steps, s => s.action == ActionType.Move))
+            _session?.Practice?.ObserveHalt(true);
         // Completed: say so, unless something newer is already on the line (a question, the next command).
         if (outcome != CommandOutcome.Completed || command == null || outputText == null) return;
         string description = Describe(command);

@@ -53,6 +53,7 @@ public class StudySession : MonoBehaviour
     public float Seconds => _log != null ? _log.Seconds : 0f;
     public StudyMenu Menu => _menu;
     public ObjectiveBanner Banner => _banner;
+    public PracticeChecklist Practice => _practice; // shown in the practice area, ROVR only
     public StudyTasks Tasks => _tasks; // for the minimap's objective marker
 
     private VRControlPanel _panel;
@@ -60,6 +61,7 @@ public class StudySession : MonoBehaviour
     private BridgeLink _bridge;
     private StudyMenu _menu;
     private ObjectiveBanner _banner;
+    private PracticeChecklist _practice;
 
     private string[] _worlds = new string[0];
     private int _worldIndex = -1;
@@ -98,6 +100,7 @@ public class StudySession : MonoBehaviour
         _menu = StudyMenu.Build(panel);
         _menu.OnIdConfirmed += EnterId;
         _banner = ObjectiveBanner.Build(panel);
+        _practice = PracticeChecklist.Build(panel, Say);
         StudyUploads.QueueUnsent();
         if (WaitsForSetup) ShowMenu();
     }
@@ -182,6 +185,7 @@ public class StudySession : MonoBehaviour
         _worlds = new string[0];
         _worldIndex = -1;
         _banner.Hide();
+        _practice?.Hide();
         _tasks.HideGoal();
         if (_panel.tutorialCard != null) _panel.tutorialCard.Dismiss();
         _panel.PauseForBreak();
@@ -242,12 +246,14 @@ public class StudySession : MonoBehaviour
 
         _menu.Hide();
         _banner.Hide();
+        _practice?.Hide();
         _tasks.HideGoal();
         _panel.ResetForParticipant();
         _panel.SetCondition(condition);
         _panel.GoToWorld("Practice", "study: practice");
         Now = Phase.Practice;
         _panel.ShowTutorial();
+        if (condition == StudyCondition.ROVR) _practice?.Show();
     }
 
     // The control page's Next: from practice to the first world, from a finished world to the next one.
@@ -283,6 +289,7 @@ public class StudySession : MonoBehaviour
     private void LoadWorld(int index)
     {
         _worldIndex = index;
+        _practice?.Hide(); // practice is over
         if (_panel.tutorialCard != null) _panel.tutorialCard.Dismiss();
         _panel.SetCondition(Condition); // sticks back on after the break
         _panel.GoToWorld(World, "study: world " + WorldPosition + " of " + _worlds.Length);
@@ -340,6 +347,7 @@ public class StudySession : MonoBehaviour
         Say($"{World}: {result}" + (wrote ? $" (saved {_log.FileName}, {_log.Rows} rows)" : " (nothing to save: no action)"));
         _log = null;
         _banner.Hide();
+        _practice?.Hide();
         _tasks.HideGoal();
         if (Now == Phase.WorldReady || Now == Phase.WorldRunning) Now = Phase.WorldDone;
     }
@@ -348,6 +356,7 @@ public class StudySession : MonoBehaviour
     {
         Now = Phase.Finished;
         _banner.Hide();
+        _practice?.Hide();
         _tasks.HideGoal();
         _panel.PauseForBreak();
         if (_panel.tutorialCard != null)
@@ -381,6 +390,7 @@ public class StudySession : MonoBehaviour
         Id = "";
         IsPilot = false;
         _banner.Hide();
+        _practice?.Hide();
         _tasks.HideGoal();
     }
 
