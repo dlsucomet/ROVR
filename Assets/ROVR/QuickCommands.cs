@@ -4,11 +4,14 @@
 // so nothing (a distance, an angle, a step count, a target) carries over from the previous command, and it
 // takes over from a running command at once instead of after a model round trip.
 //
-//   "move forward", "keep going forward", "go back", "back up", "left"         continuous
+//   "move forward", "keep going forward", "go back", "back up", "forward"      continuous
 //   "move forward 3 meters", "go back a bit"                                    a distance / "a bit"
 //   "take two steps forward", "step left", "two steps to the right"             counted steps (sidesteps for left / right)
-//   "sidestep left", "strafe right"                                             one sidestep / continuous
+//   "sidestep left", "strafe right", "move left"                                one sidestep / continuous
 //   "turn right", "turn left 45 degrees", "turn 90 degrees to the right"         a turn (90 without an angle)
+//   "left", "to the right", "a little to the left", "10 degrees to the left"     a turn too: a bare left / right is
+//                                                                                 meant as one (in the pilots a bare
+//                                                                                 "left" slid people sideways), and so is a bare angle
 //   "turn around", "turn left a little"                                          180 / a small turn
 //
 // Only a whole sentence that is exactly one of these forms is read here (fillers like "please" and "now"
@@ -47,7 +50,7 @@ namespace ROVR
             new Regex($@"^{Walk} {Small} {Dir}$"),
             new Regex($@"^(?<d>back) up(?: {Small})?$"),
             new Regex($@"^(?:keep going|keep moving|continue)$"),               // forward
-            new Regex($@"^{Dir}$"),
+            new Regex($@"^(?<d>forwards?|ahead|straight ahead|straight|backwards?|back)$"), // a bare left / right is a turn (Turns)
             new Regex($@"^(?:strafe|slide|shift) {Side}(?: {Num} {Meters})?$"),
         };
 
@@ -68,6 +71,12 @@ namespace ROVR
             new Regex($@"^(?:turn|rotate|spin) {Small}(?: to)?(?: the| your)? (?<d>left|right)$"),
             new Regex(@"^(?:turn|spin) (?<around>around|round|back)$"),
             new Regex(@"^(?<around>about face|about turn)$"),
+            // No verb: a bare side, a bare angle.
+            new Regex(@"^(?:to the |to your )?(?<d>left|right)$"),
+            new Regex($@"^(?:to the |to your )?(?<d>left|right) {Small}$"),
+            new Regex($@"^{Small} (?:to the |to your )?(?<d>left|right)$"),
+            new Regex($@"^(?:by )?{Num} degrees?(?: to)?(?: the| your)? (?<d>left|right)$"),
+            new Regex($@"^(?<d>left|right)(?: by)? {Num} degrees?$"),
         };
 
         // A command for the sentence, or null when it isn't one of the quick forms.

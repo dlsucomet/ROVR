@@ -93,7 +93,7 @@ SEVERAL STEPS. A command can have several steps, done in order. 'Move forward 10
 
 SIDESTEPS. Left and right moves are sidesteps: the user moves that way without turning. 'step left', 'sidestep left', 'take two steps to the right' are moves left / right with amount steps, never turns.
 
-TURNS. Only use a turn step when the user says turn, rotate, face or look. A bare direction ('left', 'back', 'a little to the left') means MOVE that way. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. A turn can be any angle: 'turn 30 degrees to the right' = amount exact, magnitude 30; 'turn left a little' = amount small. 'Face the door', 'turn to the door' or 'look at the door' = a turn step with condition door (direction none unless a side is said). 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
+TURNS. Use a turn step when the user says turn, rotate, face or look, and for a bare 'left' or 'right' ('left', 'to the right', 'a little to the left'): people mean turn. A bare 'forward' or 'back' means MOVE that way. An angle on its own is a turn: '10 degrees to the left' = turn left, amount exact, magnitude 10. 'turn around' = turn right, amount exact, magnitude 180. 'turn left' or 'turn right' with no number = amount none. A turn can be any angle: 'turn 30 degrees to the right' = amount exact, magnitude 30; 'turn left a little' = amount small. 'Face the door', 'turn to the door' or 'look at the door' = a turn step with condition door (direction none unless a side is said). 'turn around until you see the tree' = a turn step with condition tree and amount none. For 'turn until you see X' the condition is always X as the user said it (singular), even when X is not in the visible objects list and even when something similar is listed, because turning is how the user finds it.
 
 NUMBERS. Convert number words: 'five meters' = magnitude 5, 'half a meter' = magnitude 0.5, both amount exact.
 
@@ -115,7 +115,9 @@ Command: back up a bit
 Command: a bit more (previous command was a small move forward)
 {""steps"":[{""action"":""move"",""direction"":""forward"",""amount"":""small"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: left
-{""steps"":[{""action"":""move"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+{""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""none"",""magnitude"":0,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
+Command: 10 degrees to the left
+{""steps"":[{""action"":""turn"",""direction"":""left"",""amount"":""exact"",""magnitude"":10,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: move right half a meter
 {""steps"":[{""action"":""move"",""direction"":""right"",""amount"":""exact"",""magnitude"":0.5,""condition"":"""",""until"":""reach"",""speed"":""""}],""clarification"":"""",""which"":"""",""which_near"":""""}
 Command: a bit more (Previous command: none)
@@ -959,9 +961,13 @@ Command: go to the lamp (no lamp in the visible objects list)
             string spoken = " " + string.Join(" ", WordsOf(utterance)) + " ";
 
             // "Slowly walk to the tree" came back as "a bit" toward the tree: "a bit" needs the words for it.
+            // But a number the user did say is exact: "10 degrees to the left" came back as "small, 10", and
+            // dropping only the "small" turned the default 90 degrees instead of 10.
             bool saidSmall = Array.Exists(SmallWords, w => spoken.Contains(" " + w + " "));
+            bool saidNumber = SaysNumber.IsMatch(utterance.ToLowerInvariant());
             foreach (var step in command.steps)
-                if (step.amount == AmountType.Small && !saidSmall) step.amount = AmountType.None;
+                if (step.amount == AmountType.Small && !saidSmall)
+                    step.amount = step.magnitude > 0f && saidNumber ? AmountType.Exact : AmountType.None;
 
             foreach (var step in command.steps)
             {
