@@ -14,6 +14,12 @@
 //   - steps into a hedge stop at it (Blocked), never through it;
 //   - the minimap: the Maze's and the House's, low on the left of the view;
 //   - "get me out of this room" from the living room ends in the hall; a route to the bed goes through doorways.
+// And, since the pilots:
+//   - side talk ("I guess I'm ready", "was that 15 degrees?") isn't sent to the LLM; requests are;
+//   - an open-ended move runs at a short pause (SpeechSegmenter.OnPause); turns and counted moves wait;
+//   - a bare "left" turns (not a sidestep); "10 degrees to the left" turns 10 degrees, not 90;
+//   - "turn around more" after a small turn is a small turn more, not 180;
+//   - Whisper's prompt: the House's object names.
 // Results: the Console, and Logs/MovementCheck/results.txt. RunBatch quits with 0 if everything passed, 1 if not.
 using System;
 using System.Collections.Generic;
@@ -98,6 +104,27 @@ public static class MovementCheck
 
     static Vector3 Flat(Vector3 v) { v.y = 0f; return v; }
 
+    // A quick command that is one turn that way, by that much.
+    static void Turned(string said, DirectionType dir, AmountType amount, float degrees)
+    {
+        var c = QuickCommands.TryParse(said);
+        var s = c != null && c.steps.Length == 1 ? c.steps[0] : null;
+        Check(s != null && s.action == ActionType.Turn && s.direction == dir && s.amount == amount && Mathf.Approximately(s.magnitude, degrees),
+              $"\"{said}\" is a turn {dir} {amount} {degrees}" + (s == null ? " (not a quick turn)" : $" (got {s.action} {s.direction} {s.amount} {s.magnitude})"));
+    }
+
+    // Seconds of a 200 Hz tone at this amplitude (0 = silence) into the segmenter, 0.1 s at a time.
+    static void Feed(SpeechSegmenter seg, float seconds, float amplitude, ref float clock)
+    {
+        for (int k = 0; k < Mathf.RoundToInt(seconds * 10f); k++)
+        {
+            var chunk = new float[1600];
+            for (int i = 0; i < chunk.Length; i++) chunk[i] = amplitude * Mathf.Sin(2f * Mathf.PI * 200f * i / 16000f);
+            clock += 0.1f;
+            seg.AddSamples(chunk);
+        }
+    }
+
     static float Yaw(Transform head)
     {
         Vector3 f = Flat(head.forward);
@@ -134,6 +161,61 @@ public static class MovementCheck
             var r = InterruptModule.Evaluate(said);
             Check(r.isHalt && r.remainder.Length == 0, $"\"{said}\" only stops (remainder \"{r.remainder}\")");
         }
+
+        // ---- Side talk isn't a command; requests and commands are
+        var known = UnityEngine.Object.FindAnyObjectByType<FOVMetadataGrounding>().KnownNames();
+        foreach (var said in new[] { "I guess I'm ready.", "Was that 15 degrees?", "See you later.", "Where's the bathroom? Okay.",
+                                     "Talk to you soon.", "Hello there.", "I wonder if" })
+            Check(!SideTalk.IsCommand(said, known), $"\"{said}\" is side talk");
+        foreach (var said in new[] { "Could you walk to the door?", "Can I go a bit further?", "Where am I? Okay. Turn right 30 degrees.",
+                                     "10 degrees to the left.", "Go to the bookshelf.", "That one.", "Faster.", "Go back.", "the sofa", "more",
+                                     "One more step?", "Turn around, what is that?" })
+            Check(SideTalk.IsCommand(said, known), $"\"{said}\" is a command");
+
+        // ---- Quick forms: a bare side turns, a bare angle turns by it
+        Turned("left", DirectionType.Left, AmountType.None, 0f);
+        Turned("Okay, left.", DirectionType.Left, AmountType.None, 0f);
+        Turned("to the right", DirectionType.Right, AmountType.None, 0f);
+        Turned("10 degrees to the left.", DirectionType.Left, AmountType.Exact, 10f);
+        Turned("right 45 degrees", DirectionType.Right, AmountType.Exact, 45f);
+        Turned("a little to the left", DirectionType.Left, AmountType.Small, 0f);
+        var bareForward = QuickCommands.TryParse("forward");
+        Check(bareForward != null && bareForward.steps[0].action == ActionType.Move && bareForward.steps[0].direction == DirectionType.Forward, "a bare \"forward\" still moves");
+        var sidestep = QuickCommands.TryParse("step left");
+        Check(sidestep != null && sidestep.steps[0].action == ActionType.Move && sidestep.steps[0].direction == DirectionType.Left, "\"step left\" is still a sidestep");
+
+        // ---- What may run at a short pause: open-ended moves only
+        foreach (var said in new[] { "move forward", "move back", "keep going", "move left", "walk forward." })
+            Check(QuickCommands.IsOpenEndedMove(QuickCommands.TryParse(said)), $"\"{said}\" may run at a pause");
+        Check(GoBackWords.IsGoBack("go back"), "\"go back\" is the undo (GoBackWords), so the panel never runs it at a pause");
+        foreach (var said in new[] { "turn left", "move forward two steps", "take 5 steps forward", "move forward 3 meters", "left", "turn right 45 degrees" })
+            Check(!QuickCommands.IsOpenEndedMove(QuickCommands.TryParse(said)), $"\"{said}\" waits for the whole sentence");
+
+        // ---- The segmenter's pause: once, at EarlyEndSec of silence, before the sentence ends
+        var seg = new SpeechSegmenter(16000) { DeadAirSec = 1.5f, EarlyEndSec = 0.6f };
+        float pausedAt = -1f, endedAt = -1f, clock = 0f;
+        int pauses = 0;
+        seg.OnPause += a => { pauses++; if (pausedAt < 0f) pausedAt = clock; };
+        seg.OnSentence += a => { if (endedAt < 0f) endedAt = clock; };
+        Feed(seg, 1.2f, 0f, ref clock);    // the room
+        Feed(seg, 0.8f, 0.2f, ref clock);  // "move forward"
+        float speechEnd = clock;
+        Feed(seg, 2f, 0f, ref clock);      // silence
+        Check(pauses == 1 && Mathf.Abs(pausedAt - speechEnd - 0.6f) < 0.15f, $"a pause is handed out once, {pausedAt - speechEnd:F1} s after speech ({pauses} times)");
+        Check(endedAt > 0f && Mathf.Abs(endedAt - speechEnd - 1.5f) < 0.15f, $"and the sentence still ends at {endedAt - speechEnd:F1} s unless it's ended early");
+        seg = new SpeechSegmenter(16000) { DeadAirSec = 1.5f, EarlyEndSec = 0.6f };
+        endedAt = -1f; clock = 0f;
+        seg.OnPause += a => seg.EndNow();
+        seg.OnSentence += a => endedAt = clock;
+        Feed(seg, 1.2f, 0f, ref clock);
+        Feed(seg, 0.8f, 0.2f, ref clock);
+        Feed(seg, 2f, 0f, ref clock);
+        Check(endedAt < 0f && !seg.InSentence, "ended at the pause (EndNow), the silence after it isn't a sentence");
+
+        // ---- Whisper's prompt: the House's object names, no commands
+        string prompt = VRControlPanel.WorldPrompt(panel.StartOf("House"));
+        Check(prompt.Contains("bookshelf") && prompt.Contains("TV") && prompt.EndsWith(".") && !prompt.ToLowerInvariant().Contains("turn"),
+              "the House's Whisper prompt lists its objects: \"" + prompt + "\"");
 
         CommandOutcome? last = null;
         var outcomes = new List<CommandOutcome>();
@@ -223,6 +305,34 @@ public static class MovementCheck
         panel.CancelCommand();
         Check(nav.SpeedNow == 0f && !nav.IsBusy, "the cancel button stops at once");
 
+        // ---- A bare "left" turns; "10 degrees to the left" turns 10; "turn around more" adds a little
+        yield return 0.5f;
+        Vector3 at = body.position;
+        float y0 = Yaw(head);
+        resolver.SubmitUtterance("left");
+        for (int i = 0; i < 60 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        float turned = Mathf.DeltaAngle(y0, Yaw(head));
+        Check(Mathf.Abs(turned + 90f) < 3f && Flat(body.position - at).magnitude < 0.05f,
+              $"\"left\" turns left 90 degrees, without sliding ({turned:F1}, moved {Flat(body.position - at).magnitude:F2} m)");
+        y0 = Yaw(head);
+        resolver.SubmitUtterance("10 degrees to the left.");
+        for (int i = 0; i < 60 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        turned = Mathf.DeltaAngle(y0, Yaw(head));
+        Check(Mathf.Abs(turned + 10f) < 1.5f, $"\"10 degrees to the left\" turns 10 degrees ({turned:F1})");
+        y0 = Yaw(head);
+        resolver.SubmitUtterance("turn right a little");
+        for (int i = 0; i < 60 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        float little = Mathf.DeltaAngle(y0, Yaw(head));
+        y0 = Yaw(head);
+        resolver.SubmitUtterance("turn around more");
+        for (int i = 0; i < 80 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        turned = Mathf.DeltaAngle(y0, Yaw(head));
+        Check(little > 5f && Mathf.Abs(turned - little) < 2f, $"\"turn around more\" after \"turn right a little\" turns a little more right ({turned:F1}, the little turn was {little:F1}), not 180");
+        var build = typeof(SemanticIntentResolver).GetMethod("BuildUserPrompt", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        string memory = build != null ? (string)build.Invoke(resolver, new object[] { "do that again", "[]" }) : "";
+        Check(memory.Contains("Recent exchanges") && memory.Contains("\"turn around more\"") && memory.Contains("\"turn right a little\"")
+              && !memory.Contains("\"left\":"), "the LLM is told the last 3 exchanges:\n" + memory);
+
         // ---- Jump and land
         nav.Execute(new NavigationCommand { steps = new[] { new NavigationStep { action = ActionType.Move, direction = DirectionType.Up, condition = "" } } });
         yield return 0.2f;
@@ -265,6 +375,37 @@ public static class MovementCheck
         var corners = new List<Vector3>();
         bool route = bed != null && RoutePlanner.TryRouteTo(bed, body.position, body.GetComponent<CharacterController>().radius, nav.stopGap, corners);
         Check(route && corners.Count > 2, $"a route from the hall to the bed goes round through the doorway ({corners.Count} corners)");
+
+        // ---- Going to the TV with the coffee table in the way: round it, then facing the TV
+        string detoured = null;
+        nav.OnDetour += what => detoured = what;
+        panel.PlaceAt(house.TransformPoint(new Vector3(4.5f, 0f, 6.3f)), house.eulerAngles.y + 180f, "House", "movement check");
+        yield return 1f;
+        var tv = house.Find("Props/Television");
+        var scanNow = UnityEngine.Object.FindAnyObjectByType<FOVMetadataGrounding>().ScanFieldOfView();
+        string seen = string.Join(", ", scanNow.ConvertAll(o => $"{o.name} {o.distanceMeters:F1} m {o.angleDegrees:F0}°").GetRange(0, Mathf.Min(6, scanNow.Count)));
+        var tvRoute = new List<Vector3>();
+        bool tvRouted = tv != null && RoutePlanner.TryRouteTo(tv, body.position, body.GetComponent<CharacterController>().radius, nav.stopGap, tvRoute);
+        string routeText = tvRouted ? string.Join(" ", tvRoute.ConvertAll(p => { var l = house.InverseTransformPoint(p); return $"({l.x:F1},{l.z:F1})"; })) : "none";
+        nav.Execute(new NavigationCommand { steps = new[] { new NavigationStep { action = ActionType.Move, direction = DirectionType.Forward, condition = "tv", until = UntilType.Reach } } });
+        for (int i = 0; i < 600 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        Vector3 toTv = tv != null ? Flat(FOVMetadataGrounding.CenterOf(tv) - body.position) : Vector3.zero;
+        Vector3 endLocal = house.InverseTransformPoint(body.position);
+        Check(detoured != null, "the coffee table stops the straight way to the TV, so it goes round (" + (detoured ?? "no detour") +
+              $"; ended at ({endLocal.x:F1}, {endLocal.z:F1}); in view: {seen}; the planner's route: {routeText})");
+        Check(last == CommandOutcome.Completed && tv != null && toTv.magnitude < 2.2f,
+              $"and arrives at the TV ({last}, {toTv.magnitude:F2} m from it)");
+        Check(tv != null && Vector3.Angle(Flat(head.forward), toTv) < 15f, $"facing it ({Vector3.Angle(Flat(head.forward), toTv):F0} degrees off)");
+
+        // ---- "Go through the door" from the living room: through the doorway into the hall, facing on
+        panel.PlaceAt(house.TransformPoint(new Vector3(6f, 0f, 5f)), house.eulerAngles.y + 90f, "House", "movement check");
+        yield return 1f;
+        nav.Execute(new NavigationCommand { steps = new[] { new NavigationStep { action = ActionType.Move, direction = DirectionType.Forward, condition = "door", until = UntilType.Reach, through = true } } });
+        for (int i = 0; i < 400 && (nav.IsBusy || i == 0); i++) yield return 0.05f;
+        Vector3 inHouse = house.InverseTransformPoint(body.position);
+        Check(last == CommandOutcome.Completed && HouseRooms.RoomAt(body.position) == "hall" && inHouse.x > 9.8f,
+              $"\"go through the door\" ends in the hall, past the doorway ({last}, {HouseRooms.RoomAt(body.position)}, x {inHouse.x:F2})");
+        Check(Mathf.Abs(Mathf.DeltaAngle(house.eulerAngles.y + 90f, Yaw(head))) < 15f, $"facing on ({Mathf.DeltaAngle(house.eulerAngles.y + 90f, Yaw(head)):F0} degrees off)");
         Check(gravity.IsGrounded, "still on the floor at the end");
     }
 }

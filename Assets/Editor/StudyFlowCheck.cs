@@ -124,6 +124,7 @@ public static class StudyFlowCheck
         Check(session.Id == "p002" && session.Condition == StudyCondition.Manual && session.Sequence == 1,
             $"p002 gets traditional seq1 (got {session.Id} {session.Condition} seq{session.Sequence})");
         Check(session.Now == StudySession.Phase.Practice && panel.condition == StudyCondition.Manual, "practice, in the traditional condition");
+        Check(session.Practice != null && !session.Practice.Shown, "no practice checklist in the traditional condition");
 
         // ---- Plains
         session.Next();
@@ -244,15 +245,35 @@ public static class StudyFlowCheck
         session.Run(new StudySession.Command { kind = "assign", condition = "rovr", sequence = 3 });
         yield return 0.5f;
         Check(session.Now == StudySession.Phase.Practice && session.Condition == StudyCondition.ROVR && session.Sequence == 3, "assign rovr 3: practice in ROVR");
+        // The practice checklist (ROVR): each thing ticks off as ROVR does it.
+        var practice = session.Practice;
+        Check(practice != null && practice.Shown && practice.Done == 0, "ROVR practice shows the checklist, nothing ticked yet");
+        if (practice != null)
+        {
+            practice.Observe(ROVR.QuickCommands.TryParse("turn left"));
+            practice.Observe(ROVR.QuickCommands.TryParse("turn right 45 degrees"));
+            practice.Observe(ROVR.QuickCommands.TryParse("take two steps forward"));
+            practice.Observe(ROVR.QuickCommands.TryParse("step left"));
+            practice.Observe(ROVR.QuickCommands.TryParse("turn left")); // twice counts once
+            Check(practice.Done == 4, $"four different commands tick four items (got {practice.Done})");
+            practice.ObserveSpeed(ROVR.SpeedLevel.Fast);
+            practice.ObserveHalt(true);
+            practice.Observe(new ROVR.NavigationCommand { steps = new[] {
+                new ROVR.NavigationStep { action = ROVR.ActionType.Turn, direction = ROVR.DirectionType.Left, condition = "" },
+                new ROVR.NavigationStep { action = ROVR.ActionType.Move, direction = ROVR.DirectionType.Forward, condition = "tree", until = ROVR.UntilType.Reach } } });
+            Check(practice.Done == practice.Count, $"faster, stop, and two at once (to the tree) tick the rest ({practice.Done} of {practice.Count})");
+        }
         session.Next();
         yield return 0.5f;
         Check(session.World == "Maze" && session.WorldPosition == 1, "seq3 starts with the maze");
+        Check(practice == null || !practice.Shown, "the checklist goes when the first world starts");
 
         // ROVR: speaking starts the clock; the sentence is logged (the LLM's reply needs Ollama, so it isn't checked).
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         typeof(VRControlPanel).GetMethod("NoteSpeechStarted", flags).Invoke(panel, null);
         Check(session.Now == StudySession.Phase.WorldRunning, "ROVR: starting to speak starts the clock");
         typeof(VRControlPanel).GetMethod("OnSentenceHeard", flags).Invoke(panel, new object[] { "Move forward five meters.", 1.2f, 0.3f, "in a test" });
+        typeof(VRControlPanel).GetMethod("OnSentenceHeard", flags).Invoke(panel, new object[] { "I guess I'm ready.", 1.2f, 0.3f, "in a test" });
         yield return 0.5f;
         session.Next(); // ends the run as incomplete
         yield return 0.5f;
@@ -260,6 +281,8 @@ public static class StudyFlowCheck
         CheckWorldCsv(rovr, "p901,rovr,seq3,maze-plains-house,maze,1,1", -1, "incomplete: moved on by the researcher");
         Check(rovr.Count > 2 && rovr[2][9] == "speech_start" && rovr[2][7] == "0.000", "the first ROVR row is speech_start at t = 0");
         Check(rovr.Any(r => r[9] == "heard" && r[11].StartsWith("move forward five meters")), "the heard sentence is logged in input");
+        Check(rovr.Count > 1 && rovr[1].Length == 19 && rovr[1][18].Length > 0, "each row ends with the body's heading (body_heading_deg)");
+        Check(rovr.Any(r => r[9] == "ignored" && r[11].StartsWith("i guess i'm ready")), "side talk is logged as ignored, not sent to the LLM");
         Check(session.World == "Plain" && session.WorldPosition == 2, "Next mid-world moves on to world 2 (plains)");
         session.ResetSession();
     }
@@ -280,7 +303,7 @@ public static class StudyFlowCheck
         string name = prefix.Replace(",", " ");
         Check(string.Join(",", rows[0]) == StudyWorldLog.Header, name + ": header");
         var data = rows.Skip(1).ToList();
-        Check(data.All(r => r.Length == 18 && string.Join(",", r.Take(7)) == prefix), name + ": every row has 18 columns and starts " + prefix);
+        Check(data.All(r => r.Length == 19 && string.Join(",", r.Take(7)) == prefix), name + ": every row has 19 columns and starts " + prefix);
         bool ordered = true;
         for (int i = 1; i < data.Count; i++) ordered &= float.Parse(data[i][7], System.Globalization.CultureInfo.InvariantCulture) >= float.Parse(data[i - 1][7], System.Globalization.CultureInfo.InvariantCulture);
         Check(ordered, name + ": t_s never goes backwards");
