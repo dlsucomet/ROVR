@@ -945,6 +945,8 @@ public class VRControlPanel : MonoBehaviour
 
     public bool PanelShown => _panelShown;
     public bool MicMuted => _isMicMuted;
+    // The walking speed ("faster" / "slower"), for the caption strip.
+    public SpeedLevel CurrentSpeed => _navigation != null ? _navigation.Speed : SpeedLevel.Normal;
     public bool CardShown => tutorialCard != null && tutorialCard.Shown;
 
     private void TogglePanel() => SetPanelShown(!_panelShown, true);

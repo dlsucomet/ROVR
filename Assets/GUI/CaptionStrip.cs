@@ -5,6 +5,7 @@
 //
 // Two separate things, kept apart: the microphone (the icon, and "MIC ON" / "MIC OFF" under it) and the
 // command (the reply line: "Working on it...", "Moving forward", "Done: ...", "Stopped", "Cancelled").
+// The walking speed shows next to MIC ON / OFF when it isn't normal ("FAST", "SLOW").
 // Muting changes only the first; a command already said carries on.
 using UnityEngine;
 using UnityEngine.UI;
@@ -36,7 +37,9 @@ public class CaptionStrip : MonoBehaviour
         if (_micLabel == null) _micLabel = MakeMicLabel();
         if (_micLabel != null)
         {
-            _micLabel.text = panel.MicMuted ? "MIC OFF" : "MIC ON";
+            // The speed only when it isn't the usual one ("faster" / "slower" said), so people see it took.
+            var speed = panel.CurrentSpeed;
+            _micLabel.text = (panel.MicMuted ? "MIC OFF" : "MIC ON") + (speed == ROVR.SpeedLevel.Fast ? "  ·  FAST" : speed == ROVR.SpeedLevel.Slow ? "  ·  SLOW" : "");
             _micLabel.color = panel.MicMuted ? new Color(1f, 0.55f, 0.5f) : new Color(0.55f, 1f, 0.6f);
         }
     }

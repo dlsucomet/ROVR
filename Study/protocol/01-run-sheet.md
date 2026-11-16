@@ -57,7 +57,22 @@ With four researchers, the fourth can greet the next participant or take over a 
 The tutorial card for their condition is in view, with its controls diagram (the same diagram shows under the panel when **A** is held). Read the instructions for their condition, then ask them to press **A** to close the card. Let them try the practice area (a tree, a rock, a chair and a plant) until they're comfortable, up to about 5 minutes.
 
 **ROVR (voice):**
-> "You move by speaking. The main moves are: 'move forward', 'take two steps forward', 'step left' or 'step right', which moves you sideways without turning, and 'turn right' or 'turn left', with an angle if you like, such as 'turn right 90 degrees'. Forward is always the way you're facing when you speak. You can also say 'go to the tree' and it takes you there and stops just in front of it. A new command takes over straight away, even while you're still moving. The microphone starts off: press **A** on the controller to turn it on, and again to turn it off. Turning it off only stops listening: if you've just said something, it still does it. It also turns off during each break, so press **A** again at the start of each world. Under the microphone icon at the bottom of your view it says MIC ON or MIC OFF, and next to it you'll see what the system heard and what it's doing. Say **'stop'** at any time to stop, or press **B** to cancel a command completely. Say **'go back'** to undo your last move. If something goes wrong, just say it a different way. You can also ask to go faster or slower. Apart from the A and B buttons, please don't use the controller."
+> "Tell ROVR where to go, the way you'd tell a friend: 'go to the tree', 'turn left', 'take two steps forward'. Say 'stop' to stop, 'faster' or 'slower' to change speed, and you can say two things at once, like 'turn left and move forward'. Press **A** to turn the microphone on and off, and **B** to cancel a command."
+
+Then let the practice checklist at the top of their view guide them: it ticks off each thing as they try it (turn left, turn right 45 degrees, two steps forward, step left, go to the tree, stop while moving, faster, two at once). It doesn't time them or hold anything up: press Next when they're comfortable. If they ask, the rest is on the example card:
+
+| Say | What happens |
+|---|---|
+| "go to the sofa", "go through the door" | walks there (round anything in the way) and stops just in front, facing it |
+| "turn left", "left", "turn right 45 degrees" | turns on the spot |
+| "move forward", "keep going" | walks until they say "stop" |
+| "take three steps forward", "step left" | counted steps; "step left" moves sideways without turning |
+| "a bit more", "again", "the same" | repeats the last move |
+| "go back" | undoes the last move |
+| "stop", or **B** | stops; B also drops anything said but not yet done |
+| "faster", "slower" | walking speed |
+
+The microphone is off at the start of each world, so they press **A** again. MIC ON / MIC OFF shows under the microphone icon, next to what ROVR heard and what it's doing.
 
 **Traditional (controller):**
 > "You move with the controllers. Push the left stick to move: the further you push it, the faster you go. The right stick turns; the edges of your view darken a little while you turn, which helps with comfort. While you move, please think aloud: say what you're thinking, what you're looking for and what you're about to do, just like talking to yourself."

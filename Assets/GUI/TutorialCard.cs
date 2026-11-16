@@ -3,8 +3,8 @@
 // from the panel's Tutorial (?) button.
 //
 // It shows the controls diagram for the condition (ControlsDiagram) where PanelBuilder put the empty
-// diagram frame, and under it the main moves in words: for ROVR the phrases for moving forward, counted
-// steps, sidestepping and turning, and that "forward" is the way the user faces when they speak. Messages
+// diagram frame, and under it the main moves in words: for ROVR a few plain examples, how to stop, how to
+// change speed and that two things can be said at once. Messages
 // (ShowMessage) show their text in the frame instead.
 //
 // Closed with A or its Close button. It also shows the session's waiting card ("Waiting to start",
@@ -26,9 +26,11 @@ public class TutorialCard : MonoBehaviour
     private RawImage _diagram;
     private Text _moves; // the main moves in words, under the diagram
 
+    // Plain words (a pilot asked for a less technical briefing): what to say, how to stop, and the two things
+    // pilots didn't know they could do (change speed, say two things at once).
     private const string VoiceMoves =
-        "Say \"move forward\", \"take two steps forward\", \"step left\" (a sidestep: you don't turn) or \"turn right 90 degrees\".\n" +
-        "Forward is the way you're facing when you speak. A new command takes over at once. B cancels.";
+        "Tell ROVR where to go, the way you'd tell a friend: \"go to the tree\", \"turn left\", \"take two steps forward\".\n" +
+        "Say \"stop\" to stop, \"faster\" or \"slower\" for speed, or two things at once: \"turn left and move forward\". B cancels.";
     private const string StickMoves =
         "Left stick: walk forward and back, and sidestep left and right. Right stick: turn.\n" +
         "Forward is the way you're facing.";
