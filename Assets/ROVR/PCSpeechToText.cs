@@ -33,6 +33,10 @@ namespace ROVR
         // Ready changed: (ready, why not).
         public event Action<bool, string> OnReadyChanged;
 
+        // The current world's object names ("Bookshelf, sofa, TV."), sent with each finished sentence: the
+        // bridge gives them to Whisper as a prompt, so it hears "shelf" rather than "shell". Empty: none.
+        public string Prompt { get; set; } = string.Empty;
+
         // "http://127.0.0.1:8765", the bridge. A new address (cable <-> Wi-Fi) is asked right away.
         public void Connect(string bridgeUrl)
         {
@@ -104,6 +108,7 @@ namespace ROVR
                 request.uploadHandler = new UploadHandlerRaw(Wav(audio, sampleRate));
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "audio/wav");
+                if (isSentence && !string.IsNullOrEmpty(Prompt)) request.SetRequestHeader("X-ROVR-Prompt", Prompt);
                 request.timeout = TimeoutSec;
 
                 var done = new TaskCompletionSource<bool>();

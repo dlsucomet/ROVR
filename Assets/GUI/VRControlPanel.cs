@@ -107,6 +107,7 @@ public class VRControlPanel : MonoBehaviour
     private readonly System.Collections.Generic.Queue<float[]> _pendingSentences = new System.Collections.Generic.Queue<float[]>();
     private float[] _pendingPartial; // the newest sentence-so-far waiting for Whisper
     private PCSpeechToText _pcSpeech; // null when transcribeOnPC is off
+    private string _world;            // the world the player was last teleported to ("Plain"), for Whisper's prompt
     private BridgeLink _bridge;       // where the bridge is (cable or Wi-Fi); null when Bridge Url is empty
     private BodyUnderHead _bodyUnderHead;
     private StudySession _session; // the session run from the PC's control page
@@ -250,6 +251,7 @@ public class VRControlPanel : MonoBehaviour
                     ? "Speech to text: on the PC, through the bridge"
                     : "Speech to text: " + LocalWhisper + ", because " + whyNot + ". The PC is asked again every " + PCSpeechToText.RetrySec + " s");
                 _pcSpeech.Connect(BridgeNow);
+                _pcSpeech.Prompt = WorldPrompt(StartOf(_world)); // the world it started in
             }
         }
 
@@ -335,6 +337,9 @@ public class VRControlPanel : MonoBehaviour
         if (_gravity != null) _gravity.Settle();
         // The new world's walkable area, for "go to the table" round furniture and "get me out of this room".
         RoutePlanner.Prepare(position, _controller.radius);
+        // Whisper on the PC is told this world's object names, so it hears them right ("shelf", not "shell").
+        _world = world;
+        if (_pcSpeech != null) _pcSpeech.Prompt = WorldPrompt(StartOf(world));
 
         // The head (not just the body) lands on the destination, facing targetYRotation, wherever the
         // user stands in their play area. (InputTracking.Recenter did this before OpenXR.)
@@ -353,6 +358,28 @@ public class VRControlPanel : MonoBehaviour
         }
         Record("BUTTON", world);
         GoToWorld(world, "button");
+    }
+
+    // The object names in the world that start belongs to (its root: Plain, Maze, House, Practice), as a
+    // short list for Whisper's prompt: "Tree, pond, rock, plant." Only names, no commands: with commands in
+    // the prompt Whisper was seen to write them into room noise. Empty when there are none.
+    public const int PromptNames = 40; // Whisper's prompt holds about 220 tokens: 40 names fit easily
+    public static string WorldPrompt(Transform start)
+    {
+        if (start == null) return string.Empty;
+        Transform root = start.root;
+        var names = new System.Collections.Generic.List<string>();
+        foreach (var label in SceneLabel.All)
+        {
+            if (label == null || string.IsNullOrEmpty(label.label) || label.transform.root != root) continue;
+            string name = label.label.Trim().ToLowerInvariant();
+            name = (" " + name + " ").Replace(" tv ", " TV ").Trim();
+            if (name.Length > 0 && !names.Contains(name)) names.Add(name);
+            if (names.Count >= PromptNames) break;
+        }
+        if (names.Count == 0) return string.Empty;
+        string list = string.Join(", ", names);
+        return char.ToUpperInvariant(list[0]) + list.Substring(1) + ".";
     }
 
     // ---------- For the study session (StudySession) ----------

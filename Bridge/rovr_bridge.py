@@ -5,8 +5,10 @@
 
 - Passes every /api/... request on to Ollama unchanged and returns Ollama's answer.
 - Turns speech into text on this PC (POST /transcribe, a WAV file): Whisper on the Quest's CPU takes
-  14-17 s per sentence, whisper.cpp on a PC about 0.5 s. It uses the same model as the headset
-  (Assets/StreamingAssets/ggml-base.bin). The audio is not saved, only the text.
+  14-17 s per sentence, whisper.cpp on a PC's CPU about 0.5 s, on an NVIDIA GPU under 0.1 s. It uses
+  Bridge/whisper/ggml-small.en.bin when that's there (more accurate), else the headset's own model
+  (Assets/StreamingAssets/ggml-base.bin). With each sentence the headset sends the world's object
+  names, given to Whisper as a prompt. The audio is not saved, only the text.
 - Prints each voice command live: what was heard, what is in view, the model's reply and how
   long it took. Also accepts plain log lines on POST /log (buttons, teleports, ...).
 - Runs the study session with the operator's control page at http://127.0.0.1:8765/control (this
@@ -29,9 +31,12 @@ With --wifi the headset can be on the same network instead of the cable. It broa
 same network could then reach the bridge, so use it on your own Wi-Fi or a phone hotspot, not a shared
 one. Only local-network addresses are let in (not the internet, not VPNs such as Radmin).
 
-Speech to text needs whisper.cpp's server program, which isn't in git: download whisper-bin-x64.zip
-from https://github.com/ggml-org/whisper.cpp/releases and unzip it into Bridge/whisper/. Without it
-the bridge still runs, and the headset transcribes by itself (slowly).
+Speech to text needs whisper.cpp's server program, which isn't in git. From
+https://github.com/ggml-org/whisper.cpp/releases, unzip into Bridge/whisper/ the CUDA build
+(whisper-bin-win-cuda-12.4.0-x64.zip; it runs on RTX 50-series cards too) for an NVIDIA GPU, or
+whisper-bin-x64.zip for the CPU, and put ggml-small.en.bin there from
+https://huggingface.co/ggerganov/whisper.cpp. The control page says which model runs and whether on the
+GPU. Without the server the bridge still runs, and the headset transcribes by itself (slowly).
 
 Ollama and the Whisper server stay on 127.0.0.1: only the bridge's port is ever reachable from the headset.
 """
@@ -135,18 +140,43 @@ class Whisper:
     url = None       # "http://127.0.0.1:8766" once its server answers; None = the headset transcribes by itself
     process = None   # the server, when the bridge started it
     why_not = ""     # why there is no speech to text on this PC
+    model = ""       # the model file's name ("ggml-small.en.bin")
+    device = ""      # where it runs: "GPU (NVIDIA GeForce RTX 5070)", "CPU", or "" when not known
+    on_gpu = None    # True / False once known from the server's start-up output; None = not known
+
+
+# The model: small.en in Bridge/whisper/ when it's there (more accurate; on a GPU still well under 0.1 s a
+# sentence), else the headset's own base model.
+SMALL_MODEL = os.path.join(HERE, "whisper", "ggml-small.en.bin")
+BASE_MODEL = os.path.join(PROJECT, "Assets", "StreamingAssets", "ggml-base.bin")
 
 
 def find_whisper_server(explicit):
-    """whisper.cpp's server: --whisper, else anywhere in Bridge/whisper/, else in Voice Server/."""
+    """whisper.cpp's server: --whisper, else anywhere in Bridge/whisper/ (a GPU build, the one with
+    ggml-cuda.dll beside it, before a CPU one), else in Voice Server/."""
     if explicit:
         return explicit if os.path.isfile(explicit) else None
     name = "whisper-server.exe" if os.name == "nt" else "whisper-server"
+    found = []
     for root in (os.path.join(HERE, "whisper"), os.path.join(PROJECT, "Voice Server")):
         for folder, _, files in os.walk(root):
             if name in files:
-                return os.path.join(folder, name)
-    return None
+                found.append((not any(f.startswith("ggml-cuda") for f in files), os.path.join(folder, name)))
+    return sorted(found)[0][1] if found else None
+
+
+def whisper_device(output_path):
+    """GPU or CPU, from what the server printed while loading: whisper.cpp says "using CUDA0 backend"
+    and names the card ("Device 0: NVIDIA GeForce RTX 5070, ...") when it runs on the GPU."""
+    try:
+        with open(output_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return "", None
+    if re.search(r"using (CUDA|Vulkan|Metal)\d* backend", text):
+        card = re.search(r"Device 0: ([^,\n]+)", text)
+        return "GPU (" + (card.group(1).strip() if card else "found") + ")", True
+    return "CPU", False
 
 
 def answers(url, timeout=1):
@@ -170,7 +200,8 @@ def start_whisper(args, logs, stamp):
     if not exe:
         Whisper.why_not = "whisper.cpp's server isn't installed (unzip whisper-bin-x64.zip into Bridge/whisper/)"
         return None
-    model = os.path.abspath(args.whisper_model)
+    model = os.path.abspath(args.whisper_model or (SMALL_MODEL if os.path.isfile(SMALL_MODEL) else BASE_MODEL))
+    Whisper.model = os.path.basename(model)
     if not os.path.isfile(model) or os.path.getsize(model) < 1_000_000:
         # A clone without Git LFS has a small text file in place of the model.
         Whisper.why_not = f"no Whisper model at {model} (run: git lfs pull)"
@@ -193,7 +224,9 @@ def start_whisper(args, logs, stamp):
             return None
         if answers(url):
             Whisper.url = url
-            return f"whisper.cpp on this PC, model {os.path.basename(model)}"
+            output.flush()
+            Whisper.device, Whisper.on_gpu = whisper_device(output.name)
+            return f"whisper.cpp on this PC, model {Whisper.model}, on the {Whisper.device}"
         time.sleep(0.25)
     Whisper.why_not = f"the Whisper server didn't start within 60 s; see {output.name}"
     return None
@@ -218,6 +251,29 @@ def multipart(fields, file_field, file_name, file_bytes, file_type):
                  f'Content-Type: {file_type}\r\n\r\n'.encode() + file_bytes + b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), "multipart/form-data; boundary=" + boundary
+
+
+def whisper_text(wav_bytes, prompt=""):
+    """One pass of the Whisper server over a WAV file: its text, stripped."""
+    fields = {"response_format": "json", "temperature": "0.0"}
+    if prompt:
+        fields["prompt"] = prompt
+    form, content_type = multipart(fields, "file", "speech.wav", wav_bytes, "audio/wav")
+    request = urllib.request.Request(Whisper.url + "/inference", data=form, method="POST")
+    request.add_header("Content-Type", content_type)
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read()).get("text", "").strip()
+
+
+# What Whisper writes for noise or silence: a note in brackets ("[BLANK_AUDIO]", "(water running)",
+# "*music*") or a stock phrase. The headset's TranscriptFilter drops the same.
+NOT_SPEECH = {"you", "thank you", "thanks", "thank you for watching", "thanks for watching", "bye", "bye bye", "the end"}
+
+
+def is_speech(text):
+    words = re.sub(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*", " ", text or "")
+    words = " ".join(re.sub(r"[^a-z0-9' ]+", " ", words.lower()).split())
+    return bool(words) and words not in NOT_SPEECH
 
 
 def wav_seconds(body):
@@ -393,6 +449,7 @@ CONTROL_PAGE = """<!doctype html>
   [hidden] { display:none !important; }
 </style></head><body><main>
 <h1><span id="dot" class="dot"></span> ROVR session control <span id="link" class="note"></span></h1>
+<div class="note" id="stt"></div>
 
 <section><h2>Participant</h2>
   <div class="who" id="who">Waiting for the participant to type their ID in the headset</div>
@@ -463,6 +520,11 @@ async function refresh() {
     const s = state = r.state || {};
     document.getElementById('dot').className = 'dot' + (r.connected ? ' on' : '');
     document.getElementById('link').textContent = r.connected ? 'headset connected' : 'headset not connected';
+    const t = r.stt || {}, stt = document.getElementById('stt');
+    stt.textContent = t.ready
+      ? 'Speech to text: ' + t.model + (t.device ? ' on the ' + t.device : '') + (t.gpu === false ? ' (slower: the GPU build of whisper.cpp isn\\'t in Bridge/whisper/)' : '')
+      : 'Speech to text: not on this PC' + (t.why_not ? ' (' + t.why_not + ')' : '') + '. The headset transcribes by itself, slowly.';
+    stt.style.color = t.ready && t.gpu !== false ? '' : 'var(--warn)';
     const phase = s.phase || 'no participant';
     document.getElementById('who').textContent = s.code
       ? s.code + (s.pilot ? ' (pilot)' : '') + (s.condition ? ' · ' + (s.condition === 'trad' ? 'traditional' : 'ROVR') + ' · seq' + s.sequence : '')
@@ -547,7 +609,9 @@ class Bridge(BaseHTTPRequestHandler):
             if self._from_this_pc():
                 with Session.lock:
                     status = {"connected": time.time() - Session.seen < 3, "state": Session.state, "recent": list(_recent),
-                              "saved": list(Session.saved)}
+                              "saved": list(Session.saved),
+                              "stt": {"ready": Whisper.url is not None, "model": Whisper.model, "device": Whisper.device,
+                                      "gpu": Whisper.on_gpu, "why_not": Whisper.why_not}}
                 self._reply(200, json.dumps(status).encode())
         elif self.path == "/ping":
             # BridgeLink.cs checks with this that it found a ROVR bridge, and that it still answers.
@@ -624,18 +688,27 @@ class Bridge(BaseHTTPRequestHandler):
 
     # A WAV file from the game -> {"text": "..."}. Sentences are printed; the sentence-so-far pieces
     # (sent every half second while someone speaks, for live captions and "stop") only when slow.
+    #
+    # A finished sentence can come with the world's object names (header X-ROVR-Prompt: "Bookshelf, sofa,
+    # TV."), which Whisper is given as a prompt so it hears "shelf" rather than "shell". A prompt makes
+    # Whisper write its words into noise or silence instead ("Move forward two steps." from room noise, in
+    # testing), so the sentence is first transcribed without it, and only when that found speech (not
+    # "[BLANK_AUDIO]", "(water running)" or a stock phrase) is it transcribed again with the prompt. On a
+    # GPU each pass takes well under 0.1 s.
     def _transcribe(self, body, is_sentence):
         if Whisper.url is None:
             self._reply(503, json.dumps({"error": Whisper.why_not or "no speech to text on this PC"}).encode())
             return
         audio_seconds = wav_seconds(body)
-        form, content_type = multipart({"response_format": "json", "temperature": "0.0"}, "file", "speech.wav", body, "audio/wav")
-        request = urllib.request.Request(Whisper.url + "/inference", data=form, method="POST")
-        request.add_header("Content-Type", content_type)
+        prompt = " ".join((self.headers.get("X-ROVR-Prompt") or "").split())[:600] if is_sentence else ""
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                text = json.loads(response.read()).get("text", "")
+            text = whisper_text(body)
+            plain = text
+            if prompt and is_speech(text):
+                text = whisper_text(body, prompt)
+                if not is_speech(text):
+                    text = plain  # the prompted pass lost the speech: keep what was heard without it
         except (urllib.error.URLError, OSError, ValueError) as e:
             stopped = Whisper.process is not None and Whisper.process.poll() is not None
             if stopped:
@@ -645,10 +718,10 @@ class Bridge(BaseHTTPRequestHandler):
             return
         seconds = time.perf_counter() - started
 
-        text = text.strip()
         length = f"{audio_seconds:.1f} s" if audio_seconds is not None else "?"
         if is_sentence:
-            log("STT", f'{length} of speech -> "{short(text, 120)}"  {GREY}[{seconds:.2f} s on this PC]{RESET}', CYAN)
+            unprompted = f'  {GREY}(without the object names: "{short(plain, 80)}"){RESET}' if text != plain else ""
+            log("STT", f'{length} of speech -> "{short(text, 120)}"  {GREY}[{seconds:.2f} s on this PC]{RESET}{unprompted}', CYAN)
         elif seconds > SLOW_PARTIAL_SECONDS:
             log("STT", f'slow: {length} so far -> "{short(text, 80)}" took {seconds:.2f} s', YELLOW)
         self._reply(200, json.dumps({"text": text, "seconds": round(seconds, 3)}).encode())
@@ -719,8 +792,9 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--ollama", default="http://127.0.0.1:11434", help="where Ollama is")
     parser.add_argument("--whisper", help="whisper.cpp's whisper-server program (default: looks in Bridge/whisper/)")
-    parser.add_argument("--whisper-model", default=os.path.join(PROJECT, "Assets", "StreamingAssets", "ggml-base.bin"),
-                        help="the Whisper model (default: the headset's own, so both transcribe alike)")
+    parser.add_argument("--whisper-model",
+                        help="the Whisper model (default: Bridge/whisper/ggml-small.en.bin when it's there, "
+                             "else the headset's own ggml-base.bin)")
     parser.add_argument("--whisper-port", type=int, default=8766, help="the Whisper server's port, on 127.0.0.1 only")
     parser.add_argument("--no-whisper", action="store_true", help="no speech to text here: the headset transcribes by itself")
     args = parser.parse_args()
@@ -759,6 +833,12 @@ def main():
         how = start_whisper(args, logs, stamp)
     if Whisper.url:
         print(f"Speech to text: {GREEN}{how}{RESET}      ")
+        if Whisper.on_gpu is False:
+            print(f"  {YELLOW}Whisper is on the CPU: slower. For the GPU, unzip whisper.cpp's CUDA build "
+                  f"(whisper-bin-win-cuda-*-x64.zip) into Bridge/whisper/.{RESET}")
+        # In the session log too (not printed twice), so each log says how speech was transcribed.
+        _log_file.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S.%f}"[:-3] + f"  {'BRIDGE':<8}  Speech to text: {how}\n")
+        _log_file.flush()
     else:
         print(f"Speech to text: {YELLOW}not on this PC, {Whisper.why_not}.{RESET}\n"
               f"  The headset transcribes by itself instead (slow on a Quest: about 15 s a sentence).")
