@@ -819,6 +819,7 @@ public class VRControlPanel : MonoBehaviour
         _resolver.OnStatus += HandleNotice;
         _resolver.OnError += HandleError;
         _resolver.OnSpeedChanged += level => ShowSpeed(level, true);
+        _resolver.OnIgnored += HandleIgnored;
         // How each command's movement ended, for the study's world log.
         _navigation = GetOrAdd<NavigationController>();
         _navigation.OnCommandFinished += HandleCommandFinished;
@@ -1045,6 +1046,13 @@ public class VRControlPanel : MonoBehaviour
         _session?.Note("notice", "", notice, "");
     }
 
+    // Side talk (SideTalk): logged, not acted on, and the panel's line stays as it was.
+    private void HandleIgnored(string sentence)
+    {
+        Record("IGNORED", $"\"{sentence}\": not a command, so not sent to the LLM");
+        _session?.Note("ignored", sentence.ToLowerInvariant(), "not a command", "ignored");
+    }
+
     // How a command's movement ended: completed, halted, blocked or not found.
     private void HandleCommandFinished(NavigationCommand command, CommandOutcome outcome)
     {
@@ -1227,6 +1235,7 @@ public class VRControlPanel : MonoBehaviour
             _resolver.OnClarificationNeeded -= HandleQuestion;
             _resolver.OnStatus -= HandleNotice;
             _resolver.OnError -= HandleError;
+            _resolver.OnIgnored -= HandleIgnored;
         }
         if (_navigation != null) _navigation.OnCommandFinished -= HandleCommandFinished;
     }

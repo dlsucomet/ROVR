@@ -13,7 +13,8 @@
 //   objective_start / objective_done / objective_skipped   objective number; system = its instruction
 //   position             once a second
 //   world_end            result = completed, or incomplete and why
-//   ROVR:   speech_start, heard (input = the words, or result "ignored as noise"), command (system = what
+//   ROVR:   speech_start, heard (input = the words, or result "ignored as noise"), ignored (input = side
+//           talk that isn't a command, so not sent to the LLM: SideTalk), command (system = what
 //           it will do), question, notice, error, halt, speed, move_end (result = completed / halted /
 //           blocked / not found), mic (input = on / off)
 //   Trad:   move (input = forward, forward-right, right, back-right, back, back-left, left, forward-left or

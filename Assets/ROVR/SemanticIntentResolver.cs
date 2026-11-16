@@ -45,6 +45,7 @@ namespace ROVR
         public event Action<NavigationCommand> OnCommandResolved;
         public event Action<IList<Transform>> OnChoicesChanged; // objects to glow while asking "which one?"; empty = none
         public event Action<SpeedLevel> OnSpeedChanged;
+        public event Action<string> OnIgnored;  // a sentence that isn't a command (SideTalk), not sent to the LLM
 
         public MovementHabits Habits { get; } = new MovementHabits();
         public float LastLatencySeconds => ollama != null ? ollama.LastLatencySeconds : 0f;
@@ -333,7 +334,22 @@ Command: go to the lamp (no lamp in the visible objects list)
                 return;
             }
 
+            // Side talk ("I guess I'm ready", "was that 15 degrees?", "see you later") isn't for ROVR: the
+            // model used to turn it into a move. Never while ROVR waits for an answer ("that one", "ahead").
+            if (!AwaitingAnswer() && !SideTalk.IsCommand(utterance, grounding.KnownNames()))
+            {
+                OnIgnored?.Invoke(utterance);
+                return;
+            }
+
             Resolve(utterance);
+        // ROVR asked something ("Which rock?", "More of what?") a moment ago and the user may be answering.
+        bool AwaitingAnswer()
+        {
+            return ChoicePending()
+                || (!string.IsNullOrEmpty(pendingClarification) && Time.time - clarificationTime <= stateTimeoutSeconds);
+        }
+
         }
 
         static readonly System.Text.RegularExpressions.Regex LeaveRoomWords = new System.Text.RegularExpressions.Regex(
