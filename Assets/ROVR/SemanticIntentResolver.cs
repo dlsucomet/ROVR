@@ -381,6 +381,24 @@ Command: go to the lamp (no lamp in the visible objects list)
                 || (!string.IsNullOrEmpty(pendingClarification) && Time.time - clarificationTime <= stateTimeoutSeconds);
         }
 
+        static readonly System.Text.RegularExpressions.Regex ThroughWords = new System.Text.RegularExpressions.Regex(@"\b(?:through|thru)\b");
+
+        // "Go through the door": the move to the door carries on through its doorway (NavigationController,
+        // HouseRooms) instead of stopping short of it. Read from the words, not left to the model.
+        static void MarkThrough(NavigationCommand command, string utterance)
+        {
+            if (string.IsNullOrEmpty(utterance)) return;
+            string lower = utterance.ToLowerInvariant();
+            // "Go back to the rock" is a trip to the rock, not a backward walk until it's reached (the model
+            // returned direction back with condition rock, prompt rule or not).
+            if (lower.Contains("back to"))
+                foreach (var s in command.steps)
+                    if (s.action == ActionType.Move && s.direction == DirectionType.Back && s.HasCondition) s.direction = DirectionType.Forward;
+            if (!ThroughWords.IsMatch(lower)) return;
+            foreach (var s in command.steps)
+                if (s.action == ActionType.Move && s.HasCondition && s.condition.ToLowerInvariant().Contains("door")) s.through = true;
+        }
+
         static readonly System.Text.RegularExpressions.Regex MoreTurnWords = new System.Text.RegularExpressions.Regex(
             @"^(?:okay |ok |now |so )*(?:(?:turn|spin|rotate)(?: a ?round)?(?: a bit| a little| a little bit| some)? (?:more|further)|keep turning)(?: please)?$");
 
@@ -595,7 +613,7 @@ Command: go to the lamp (no lamp in the visible objects list)
         void Proceed(NavigationCommand command, List<GroundedObject> visible, string utterance)
         {
             glowNext = null;
-            if (!command.IsClarification) DropCarriedOver(command, utterance);
+            if (!command.IsClarification) { DropCarriedOver(command, utterance); MarkThrough(command, utterance); }
             string problem = command.IsClarification ? null : FindGroundingProblem(command, visible, utterance);
             if (problem != null) command = NavigationCommand.Clarification(problem);
             OnChoicesChanged?.Invoke(glowNext != null ? (IList<Transform>)glowNext : NoObjects);

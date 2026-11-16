@@ -864,6 +864,7 @@ public class VRControlPanel : MonoBehaviour
         // How each command's movement ended, for the study's world log.
         _navigation = GetOrAdd<NavigationController>();
         _navigation.OnCommandFinished += HandleCommandFinished;
+        _navigation.OnDetour += HandleDetour;
 
         _router = NewRouter();
     }
@@ -1087,6 +1088,14 @@ public class VRControlPanel : MonoBehaviour
     {
         SetOutputFeedback(notice, Color.yellow);
         _session?.Note("notice", "", notice, "");
+    }
+
+    // On the way to an object, something was in the way and ROVR goes round it.
+    private void HandleDetour(string what)
+    {
+        string line = what == "something" ? "Going round what's in the way" : "Going round the " + what;
+        SetOutputFeedback(line, Color.white);
+        _session?.Note("notice", "", line, "");
     }
 
     // Side talk (SideTalk): logged, not acted on, and the panel's line stays as it was.

@@ -28,9 +28,13 @@
 // steps), with the view dipping once per step (StepBob), from the first step to the last. Other moves glide.
 //
 // Going to an object ("go to the table") heads straight for it, stops a safe gap short of it (stopGap, from
-// the body's edge) and ends facing it. It never finds its own way round anything: if something is in the way
-// (even a small stool), the move stops there as Blocked ("Something is in the way") instead of sliding round
-// it, and the user decides how to get past. Only "get me out of this room" plans a route (RoutePlanner).
+// the body's edge) and ends facing it. It never slides round things on its own; but when something stops
+// it on the way (an armchair in front of the bookshelf), it asks the route planner (RoutePlanner) for a way
+// round to the object, says so (OnDetour: "Going round the armchair"), walks that route through doorways if
+// need be, and ends facing the object. Only when there's no way round does it stop as Blocked ("Something is
+// in the way"). In the pilots every trip to an object in the House stopped at the first thing in the way.
+// "Go through the door" walks through the doorway's opening (HouseRooms, not the door leaf, which stands open
+// to one side) to just past it, facing on. "Get me out of this room" plans its route the same way.
 //
 // Every command ends in an outcome (Completed / Halted / Blocked / NotFound / Interrupted) reported
 // through OnCommandFinished, so nothing fails silently and a blocked step can't stall a chain.
@@ -94,6 +98,7 @@ namespace ROVR
         const float SnapPause = 0.25f;       // s between snaps while searching
 
         public event Action<NavigationCommand, CommandOutcome> OnCommandFinished;
+        public event Action<string> OnDetour; // going round something on the way to an object: what ("armchair")
 
         public bool IsBusy => activeRoutine != null;
         public bool IsTurning { get; private set; } // for the comfort vignette
@@ -367,6 +372,8 @@ namespace ROVR
                     }
                 }
                 yield return WalkInSteps(step, dir, toward, bob);
+                // Walking in steps to an object ("walk in steps to the door") and something's in the way: round it.
+                if (toward != null && !step.HasMagnitude && stepOutcome == CommandOutcome.Blocked) { yield return Detour(toward, step, dir); yield break; }
                 if (toward != null && stepOutcome == CommandOutcome.Completed) yield return FaceTowards(FOVMetadataGrounding.CenterOf(toward));
                 yield break;
             }
@@ -403,6 +410,15 @@ namespace ROVR
                 }
             }
 
+            // "Go through the door": through the doorway's opening to just past it, facing on (in the House).
+            if (goal != null && step.through
+                && HouseRooms.TryThrough(transform.position, FOVMetadataGrounding.CenterOf(goal), out Vector3 beyond, out Vector3 onward))
+            {
+                yield return RunGoTo(new NavigationStep { action = ActionType.GoTo, direction = DirectionType.Forward, condition = string.Empty,
+                                                          point = beyond, faceTowards = onward, speed = step.speed });
+                yield break;
+            }
+
             while (travelled < target)
             {
                 float speed = WalkingSpeed(step, inSteps);
@@ -421,13 +437,58 @@ namespace ROVR
                         speed = Mathf.Max(minCreepSpeed, speed * (gap - stopGap) / rampLength);
                 }
 
-                if (!Step(dir, speed, ref travelled, target, ref blockedFrames, goal != null)) yield break;
+                if (!Step(dir, speed, ref travelled, target, ref blockedFrames, goal != null))
+                {
+                    if (goal != null && stepOutcome == CommandOutcome.Blocked) yield return Detour(goal, step, dir);
+                    yield break;
+                }
                 if (bob != null) bob.Walk(travelled / step.stepLength);
                 yield return null;
             }
 
             // At the object: end facing it.
             if (goal != null) yield return FaceTowards(FOVMetadataGrounding.CenterOf(goal));
+        }
+
+        // Something stopped a trip to an object: a way round it to the object (RoutePlanner), walked corner by
+        // corner, ending facing the object. Without one the step stays Blocked, as before.
+        IEnumerator Detour(Transform goal, NavigationStep step, Vector3 dir)
+        {
+            var corners = new List<Vector3>();
+            if (!RoutePlanner.TryRouteTo(goal, transform.position, controller.radius, stopGap, corners) || corners.Count < 2) yield break;
+            // A route that is the way it was already going, through the very thing that stopped it, isn't a way round.
+            Vector3 first = Vector3.ProjectOnPlane(corners[1] - transform.position, Vector3.up);
+            bool straightOn = corners.Count == 2 && first.magnitude > 0.3f && Vector3.Angle(first, dir) < 10f;
+            if (straightOn) yield break;
+
+            stepOutcome = CommandOutcome.Completed;
+            if (first.magnitude > 0.3f || corners.Count > 2) OnDetour?.Invoke(ObstacleAhead(dir));
+            for (int i = 1; i < corners.Count; i++)
+            {
+                yield return WalkLeg(corners[i], step);
+                if (stepOutcome != CommandOutcome.Completed) yield break;
+            }
+            yield return Settle();
+            yield return FaceTowards(FOVMetadataGrounding.CenterOf(goal));
+        }
+
+        // What's right in front of the body that way: its scan name ("armchair"), "wall", or "something".
+        string ObstacleAhead(Vector3 dir)
+        {
+            Vector3 c = transform.TransformPoint(controller.center);
+            float half = Mathf.Max(controller.height * 0.5f, controller.radius) - controller.radius;
+            var hits = Physics.CapsuleCastAll(c + Vector3.up * half, c - Vector3.up * Mathf.Max(0f, half - ProbeLift), controller.radius * 0.9f,
+                                              dir, 0.6f, detectionMask, QueryTriggerInteraction.Ignore);
+            Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            foreach (var hit in hits)
+            {
+                if (hit.collider.transform.IsChildOf(transform)) continue;
+                var label = hit.collider.GetComponentInParent<SceneLabel>();
+                if (label != null && !string.IsNullOrEmpty(label.label)) return label.label;
+                if (hit.collider.CompareTag("Wall")) return "wall";
+                return "something";
+            }
+            return "something";
         }
 
         // Speed at the moment a foot comes down, as a share of the step's average: the body slows there but never
@@ -600,7 +661,11 @@ namespace ROVR
             float moved = Vector3.Dot(actual, dir);
             travelled += Mathf.Max(0f, moved);
 
-            bool held = strict ? delta > 0.001f && moved < delta * StrictProgress : moved < delta * 0.25f;
+            // A frame whose move is too small to judge (just after a held frame reset the speed) neither counts
+            // as held nor as progress: before, it reset the count, so pressing straight into an armchair
+            // alternated held / too small and was never called Blocked.
+            bool tiny = strict && delta <= 0.001f;
+            bool held = !tiny && moved < delta * (strict ? StrictProgress : 0.25f);
             if (held)
             {
                 speedNow = 0f; // touching something: no speed builds up against it
@@ -610,7 +675,7 @@ namespace ROVR
                     return false;
                 }
             }
-            else
+            else if (!tiny)
             {
                 blockedFrames = 0;
             }

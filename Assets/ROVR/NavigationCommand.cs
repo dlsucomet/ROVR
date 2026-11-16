@@ -66,6 +66,7 @@ namespace ROVR
         public float stepLength;  // metres per step when amount is Steps; set by the engine (MovementHabits)
         public UnityEngine.Vector3? point;       // GoTo: where to walk to
         public UnityEngine.Vector3? faceTowards; // GoTo: what to face on arrival, if anything
+        public bool through;      // Move to a door: through its doorway to just past it ("go through the door"), set from the words
 
         public bool HasCondition => !string.IsNullOrEmpty(condition);
         public bool HasMagnitude => magnitude > 0f;

@@ -50,6 +50,8 @@ namespace ROVR
 
         public const float Width = 24f, Depth = 20f;
         const float Beyond = 1.6f; // m past the doorway where "out" ends: the whole body through it
+        const float ThroughBeyond = 1.2f; // m past the doorway where "go through the door" ends
+        const float DoorReach = 2.5f;     // a door further than this from a doorway's middle isn't that doorway's
 
         static Transform _root;
 
@@ -73,6 +75,33 @@ namespace ROVR
             foreach (var r in Rooms)
                 if (r.area.Contains(new Vector2(p.x, p.z)) && r.priority > bestPriority) { best = r.name; bestPriority = r.priority; }
             return best;
+        }
+
+        // "Go through the door": the doorway that door stands in (the nearest doorway's middle within
+        // DoorReach of it), and a spot just past it on the far side from the body, with a point further on to
+        // face. False when the door isn't at one of the House's doorways.
+        public static bool TryThrough(Vector3 body, Vector3 door, out Vector3 point, out Vector3 face)
+        {
+            point = face = body;
+            var root = Root;
+            if (root == null) return false;
+            Vector3 d3 = root.InverseTransformPoint(door), b3 = root.InverseTransformPoint(body);
+            Vector2 doorAt = new Vector2(d3.x, d3.z), bodyAt = new Vector2(b3.x, b3.z);
+            float best = DoorReach;
+            bool found = false;
+            foreach (var d in Doorways)
+            {
+                float far = Vector2.Distance(doorAt, d.at);
+                if (far > best) continue;
+                best = far;
+                // The far side: the way across the doorway that leads away from where the body is.
+                Vector2 onward = Vector2.Dot(bodyAt - d.at, d.across) <= 0f ? d.across : -d.across;
+                Vector2 p = d.at + onward * ThroughBeyond, f = d.at + onward * (ThroughBeyond + 3f);
+                point = root.TransformPoint(new Vector3(p.x, b3.y, p.y));
+                face = root.TransformPoint(new Vector3(f.x, b3.y + 1.6f, f.y));
+                found = true;
+            }
+            return found;
         }
 
         // The way out of the room the body is in: a spot just through the nearest doorway that leads to a
